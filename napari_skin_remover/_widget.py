@@ -374,7 +374,12 @@ class SkinRemoverWidget(QWidget):
         # Prefer scale directly from the target layer (set by reader or Open btn)
         sc = target.scale
         scale = tuple(float(v) for v in sc) if len(sc) == 3 else self._get_layer_scale()
-        device         = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if torch.cuda.is_available():
+            device = torch.device("cuda")
+        elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+            device = torch.device("mps")
+        else:
+            device = torch.device("cpu")
 
         self._run_btn.setEnabled(False)
         self._status(f"Running on {device} (threshold={threshold:.2f})...")

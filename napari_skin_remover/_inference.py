@@ -2,6 +2,7 @@
 _inference.py — MONAI 3D U-Net sliding-window inference.
 """
 
+import warnings
 from pathlib import Path
 
 import numpy as np
@@ -75,7 +76,11 @@ def run_inference(volume, model_path, threshold, device, erosion_voxels=0):
         .to(device)
     )
 
-    with torch.no_grad():
+    with torch.no_grad(), warnings.catch_warnings():
+        warnings.filterwarnings(
+            "ignore",
+            message=".*non-tuple sequence.*multidimensional indexing.*",
+        )
         pred_logits = sliding_window_inference(
             volume_t,
             roi_size=(64, 192, 192),
