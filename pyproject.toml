@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=61", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "napari-brain-peel"
+version = "0.1.0"
+description = "MONAI brain peel napari plugin — zebrafish confocal skin removal"
+requires-python = ">=3.8"
+dependencies = ["napari", "torch", "monai", "tifffile", "numpy", "qtpy"]
+
+[project.scripts]
+brain-peel = "napari_brain_peel.__main__:main"
+
+[project.entry-points."napari.manifest"]
+napari-brain-peel = "napari_brain_peel:napari.yaml"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["napari_brain_peel*"]
+
+[tool.setuptools.package-data]
+"napari_brain_peel" = ["napari.yaml"]

@@ -1,0 +1,434 @@
+"""
+_widget.py — BrainPeelWidget napari dock panel.
+"""
+
+import threading
+import traceback
+from pathlib import Path
+
+import numpy as np
+import tifffile
+import torch
+import napari
+
+from qtpy.QtWidgets import (
+    QPushButton, QLabel, QWidget, QVBoxLayout, QHBoxLayout,
+    QSlider, QCheckBox, QFileDialog, QSizePolicy,
+)
+from qtpy.QtCore import Qt, QTimer
+
+from ._io import load_file
+from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
+
+
+def _sep():
+    """Thin horizontal separator line."""
+    w = QWidget()
+    w.setFixedHeight(1)
+    w.setStyleSheet("background-color: #666;")
+    return w
+
+
+class BrainPeelWidget(QWidget):
+    """
+    Napari dock panel for MONAI brain peeling (skin removal).
+
+    Layout
+    ------
+    [Open TIF / IMS file]
+    ─────────────────────
+    Model (.pth):
+    [path…]  [...]
+    ─────────────────────
+    Input: bottom layer (auto)
+      "{name}"  (Z×Y×X  dtype)
+    ─────────────────────
+      Z=1.0000  Y=0.1740  X=0.1740 µm
+      Anisotropy 5.75:1  |  TIF ImageJ metadata
+    ─────────────────────
+    Threshold: [────●──]  0.30
+    ─────────────────────
+    [x] Save brain_only.tif
+    [x] Save brain_mask.tif
+    ─────────────────────
+    [     Run Brain Peel     ]
+    Status: Ready
+    """
+
+    def __init__(self, napari_viewer: "napari.viewer.Viewer"):
+        super().__init__()
+        self._viewer = napari_viewer
+        self._state = {
+            "model_path":    DEFAULT_MODEL if DEFAULT_MODEL.exists() else None,
+            "last_file_path": None,
+            "metadata":      None,
+        }
+        self._build_ui()
+        self._connect_signals()
+        self._refresh_layer_info()
+
+    # ------------------------------------------------------------------ #
+    # UI construction
+    # ------------------------------------------------------------------ #
+
+    def _build_ui(self):
+        layout = QVBoxLayout()
+        layout.setSpacing(6)
+
+        title = QLabel("<b>MONAI Brain Peel</b>")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        self._open_btn = QPushButton("Open TIF / IMS file")
+        layout.addWidget(self._open_btn)
+
+        layout.addWidget(_sep())
+
+        layout.addWidget(QLabel("Model (.pth):"))
+        model_row = QHBoxLayout()
+        self._model_lbl = QLabel(
+            str(DEFAULT_MODEL) if DEFAULT_MODEL.exists() else "— no default found —"
+        )
+        self._model_lbl.setWordWrap(True)
+        self._model_lbl.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._model_browse_btn = QPushButton("...")
+        self._model_browse_btn.setFixedWidth(32)
+        model_row.addWidget(self._model_lbl)
+        model_row.addWidget(self._model_browse_btn)
+        layout.addLayout(model_row)
+
+        layout.addWidget(_sep())
+
+        layout.addWidget(QLabel("Input: active (selected) layer"))
+        self._layer_info = QLabel("  — no layers yet —")
+        self._layer_info.setWordWrap(True)
+        layout.addWidget(self._layer_info)
+
+        layout.addWidget(_sep())
+
+        self._meta_lbl = QLabel("  — voxel info unavailable —")
+        self._meta_lbl.setWordWrap(True)
+        self._meta_lbl.setStyleSheet("color: #aaa; font-size: 10px;")
+        layout.addWidget(self._meta_lbl)
+
+        layout.addWidget(_sep())
+
+        thresh_row = QHBoxLayout()
+        thresh_row.addWidget(QLabel("Threshold:"))
+        self._thresh_slider = QSlider(Qt.Horizontal)
+        self._thresh_slider.setMinimum(1)
+        self._thresh_slider.setMaximum(99)
+        self._thresh_slider.setValue(30)
+        self._thresh_val = QLabel("0.30")
+        self._thresh_val.setFixedWidth(36)
+        thresh_row.addWidget(self._thresh_slider)
+        thresh_row.addWidget(self._thresh_val)
+        layout.addLayout(thresh_row)
+
+        # Erosion slider — strips skin rim from brain_only output
+        erosion_row = QHBoxLayout()
+        erosion_row.addWidget(QLabel("Erosion (vox):"))
+        self._erosion_slider = QSlider(Qt.Horizontal)
+        self._erosion_slider.setMinimum(0)
+        self._erosion_slider.setMaximum(15)
+        self._erosion_slider.setValue(0)
+        self._erosion_val = QLabel("0")
+        self._erosion_val.setFixedWidth(24)
+        erosion_row.addWidget(self._erosion_slider)
+        erosion_row.addWidget(self._erosion_val)
+        layout.addLayout(erosion_row)
+        erosion_note = QLabel(
+            "  Erodes mask before applying to brain_only\n"
+            "  (raw brain_mask is always saved un-eroded)"
+        )
+        erosion_note.setStyleSheet("color: #aaa; font-size: 10px;")
+        layout.addWidget(erosion_note)
+
+        layout.addWidget(_sep())
+
+        self._save_only_cb = QCheckBox("Save brain_only.tif")
+        self._save_only_cb.setChecked(True)
+        self._save_mask_cb = QCheckBox("Save brain_mask.tif")
+        self._save_mask_cb.setChecked(True)
+        layout.addWidget(self._save_only_cb)
+        layout.addWidget(self._save_mask_cb)
+
+        layout.addWidget(_sep())
+
+        self._run_btn = QPushButton("Run Brain Peel")
+        self._run_btn.setStyleSheet("QPushButton { font-weight: bold; padding: 6px; }")
+        layout.addWidget(self._run_btn)
+
+        self._status_lbl = QLabel("Status: Ready")
+        self._status_lbl.setWordWrap(True)
+        layout.addWidget(self._status_lbl)
+
+        layout.addStretch()
+        self.setLayout(layout)
+
+    # ------------------------------------------------------------------ #
+    # Signal connections
+    # ------------------------------------------------------------------ #
+
+    def _connect_signals(self):
+        self._open_btn.clicked.connect(self._on_open)
+        self._model_browse_btn.clicked.connect(self._on_browse_model)
+        self._thresh_slider.valueChanged.connect(
+            lambda v: self._thresh_val.setText(f"{v / 100:.2f}")
+        )
+        self._erosion_slider.valueChanged.connect(
+            lambda v: self._erosion_val.setText(str(v))
+        )
+        self._run_btn.clicked.connect(self._on_run)
+        self._viewer.layers.events.inserted.connect(self._refresh_layer_info)
+        self._viewer.layers.events.removed.connect(self._refresh_layer_info)
+        self._viewer.layers.selection.events.changed.connect(self._refresh_layer_info)
+
+    # ------------------------------------------------------------------ #
+    # Helpers
+    # ------------------------------------------------------------------ #
+
+    def _status(self, msg):
+        self._status_lbl.setText(f"Status: {msg}")
+
+    def _get_layer_scale(self):
+        """
+        Return (z, y, x) scale in µm.
+
+        Priority:
+          1. metadata from a file loaded via Open button
+          2. scale of the active layer (respects per-layer scale set by reader)
+          3. default (1.0, 1.0, 1.0)
+        """
+        meta = self._state.get("metadata")
+        if meta:
+            return meta["scale"]
+        lyr = self._active_layer()
+        if lyr is not None:
+            sc = lyr.scale
+            if len(sc) == 3:
+                return tuple(float(v) for v in sc)
+        return (1.0, 1.0, 1.0)
+
+    def _refresh_meta_lbl(self):
+        scale = self._get_layer_scale()
+        z, y, x = scale
+        meta = self._state.get("metadata")
+        if meta:
+            source     = meta.get("source", "Unknown")
+            anisotropy = meta.get("anisotropy", 1.0)
+        else:
+            xy         = (x + y) / 2.0
+            anisotropy = z / xy if xy > 0 else 1.0
+            source     = (
+                "from layer scale"
+                if scale != (1.0, 1.0, 1.0)
+                else "default (1, 1, 1)"
+            )
+        line1 = f"Z={z:.4f}  Y={y:.4f}  X={x:.4f} \u00b5m"
+        line2 = f"Anisotropy {anisotropy:.2f}:1  |  {source}"
+        self._meta_lbl.setText(f"{line1}\n{line2}")
+
+    def _active_layer(self):
+        """Return the active (selected) Image layer, or None."""
+        active = self._viewer.layers.selection.active
+        if active is not None and isinstance(active, napari.layers.Image):
+            return active
+        # fall back to topmost Image layer
+        for lyr in reversed(self._viewer.layers):
+            if isinstance(lyr, napari.layers.Image):
+                return lyr
+        return None
+
+    def _refresh_layer_info(self, *_):
+        lyr = self._active_layer()
+        if lyr is None:
+            self._layer_info.setText("  — no image layers yet —")
+            self._meta_lbl.setText("  — voxel info unavailable —")
+            return
+        d = lyr.data
+        self._layer_info.setText(f'  "{lyr.name}"\n  {d.shape}  {d.dtype}')
+        self._refresh_meta_lbl()
+
+    # ------------------------------------------------------------------ #
+    # Public helper (used by __main__.py for CLI pre-loading)
+    # ------------------------------------------------------------------ #
+
+    def _add_channels(self, path, channels):
+        """Add a list of (volume, name, metadata) channel tuples as image layers."""
+        colormaps = ["gray", "green", "magenta", "cyan"]
+        self._state["last_file_path"] = path
+        self._state["metadata"]       = channels[0][2]   # shared metadata
+        for i, (volume, name, metadata) in enumerate(channels):
+            cmap = colormaps[i % len(colormaps)]
+            self._viewer.add_image(
+                volume, name=name, colormap=cmap, scale=metadata["scale"]
+            )
+        self._refresh_layer_info()
+
+    def preload(self, path):
+        """Load a file programmatically (CLI / __main__.py use)."""
+        path = Path(path)
+        self._status(f"Loading {path.name}...")
+        try:
+            channels = load_file(path)
+            self._add_channels(path, channels)
+            n = len(channels)
+            shape = channels[0][0].shape
+            self._status(f"Loaded: {path.name}  {n} ch  {shape}")
+        except Exception as exc:
+            self._status(f"ERROR: {exc}")
+            print(f"ERROR loading {path.name}: {exc}")
+
+    # ------------------------------------------------------------------ #
+    # Slots
+    # ------------------------------------------------------------------ #
+
+    def _on_open(self):
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Open confocal stack",
+            "",
+            "Confocal stacks (*.tif *.tiff *.ims);;All files (*)",
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        self._status(f"Loading {path.name}...")
+        try:
+            channels = load_file(path)
+            self._add_channels(path, channels)
+            n = len(channels)
+            shape = channels[0][0].shape
+            self._status(f"Loaded: {path.name}  {n} ch  {shape}")
+        except Exception as exc:
+            self._status(f"ERROR: {exc}")
+            print(f"ERROR loading {path.name}: {exc}")
+
+    def _on_browse_model(self):
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select model checkpoint",
+            str(_SKIN_SEG_DIR / "models"),
+            "PyTorch checkpoints (*.pth)",
+        )
+        if not path_str:
+            return
+        self._state["model_path"] = Path(path_str)
+        self._model_lbl.setText(path_str)
+        self._status(f"Model: {Path(path_str).name}")
+
+    def _on_run(self):
+        if not self._state["model_path"] or not Path(self._state["model_path"]).exists():
+            self._status("ERROR: model file not found — browse to a .pth file.")
+            return
+        target = self._active_layer()
+        if target is None:
+            self._status("ERROR: no image layer selected — open a file and click a layer.")
+            return
+        volume = np.asarray(target.data)
+        if volume.ndim != 3:
+            self._status(f"ERROR: 3D volume required, got {volume.ndim}D {volume.shape}.")
+            return
+
+        threshold      = self._thresh_slider.value() / 100.0
+        erosion_voxels = self._erosion_slider.value()
+        model_path     = Path(self._state["model_path"])
+        stem           = target.name
+        file_path      = self._state.get("last_file_path")
+        # Prefer scale directly from the target layer (set by reader or Open btn)
+        sc = target.scale
+        scale = tuple(float(v) for v in sc) if len(sc) == 3 else self._get_layer_scale()
+        device         = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+
+        self._run_btn.setEnabled(False)
+        self._status(f"Running on {device} (threshold={threshold:.2f})...")
+
+        print(f"\n{'='*70}")
+        print(f"BRAIN PEEL — {stem}  shape={volume.shape}")
+        print(f"Model    : {model_path.name}")
+        print(f"Threshold: {threshold}   Device: {device}")
+        print(f"Erosion  : {erosion_voxels} voxel(s)")
+        print(f"Scale    : Z={scale[0]:.4f}  Y={scale[1]:.4f}  X={scale[2]:.4f} µm")
+        print(f"{'='*70}")
+
+        result = {}
+
+        def _worker():
+            try:
+                brain_mask, brain_only = run_inference(
+                    volume, model_path, threshold, device, erosion_voxels
+                )
+                result["brain_mask"] = brain_mask
+                result["brain_only"] = brain_only
+            except Exception as exc:
+                traceback.print_exc()
+                result["error"] = str(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        timer = QTimer(self)
+
+        def _poll():
+            if thread.is_alive():
+                return
+
+            timer.stop()
+
+            if "error" in result:
+                self._status(f"ERROR: {result['error']}")
+                self._run_btn.setEnabled(True)
+                return
+
+            brain_mask  = result["brain_mask"]
+            brain_only  = result["brain_only"]
+            nonzero_pct = 100.0 * brain_mask.sum() / brain_mask.size
+            print(f"Brain mask: {brain_mask.sum():,} voxels ({nonzero_pct:.1f}%)")
+
+            # Replace stale output layers if present
+            for lname in (f"{stem}_brain_mask", f"{stem}_brain_only"):
+                if lname in self._viewer.layers:
+                    self._viewer.layers.remove(lname)
+
+            mask_layer = self._viewer.add_labels(
+                brain_mask,
+                name=f"{stem}_brain_mask",
+                opacity=0.4,
+                scale=scale,
+            )
+            try:
+                mask_layer.color = {1: "cyan"}
+            except Exception:
+                pass  # older napari — default label color is fine
+            self._viewer.add_image(
+                brain_only,
+                name=f"{stem}_brain_only",
+                colormap="gray",
+                scale=scale,
+            )
+            self._refresh_layer_info()
+
+            out_dir = file_path.parent if file_path else Path(".")
+            if self._save_only_cb.isChecked():
+                out = out_dir / f"{stem}_brain_only.tif"
+                tifffile.imwrite(str(out), brain_only, compression="zlib")
+                print(f"Saved: {out}")
+            if self._save_mask_cb.isChecked():
+                out = out_dir / f"{stem}_brain_mask.tif"
+                tifffile.imwrite(
+                    str(out),
+                    (brain_mask * 255).astype(np.uint8),
+                    compression="zlib",
+                )
+                print(f"Saved: {out}")
+
+            self._status(f"Done — brain={nonzero_pct:.1f}% of volume.")
+            self._run_btn.setEnabled(True)
+
+            print(f"{'='*70}")
+            print("BRAIN PEEL COMPLETE")
+            print(f"{'='*70}\n")
+
+        timer.timeout.connect(_poll)
+        timer.start(500)
