@@ -429,14 +429,24 @@ class SkinRemoverWidget(QWidget):
 
         def _worker():
             try:
-                vol = volume
-                if do_bg_removal:
-                    print("   Background removal...")
-                    vol, *_ = remove_background(vol, tolerance_pct=bg_tolerance_pct)
-
+                # Step 1: inference on original volume (never bg-removed)
                 brain_mask, brain_only = run_inference(
-                    vol, model_path, threshold, device, erosion_voxels
+                    volume, model_path, threshold, device, erosion_voxels
                 )
+
+                # Step 2: background removal AFTER inference, outside brain only.
+                # Pixels inside the brain mask are protected so blob holes cannot form.
+                if do_bg_removal:
+                    print("   Background removal (outside brain mask only)...")
+                    vol_clean, *_ = remove_background(
+                        volume, tolerance_pct=bg_tolerance_pct
+                    )
+                    # Restore original values everywhere the brain mask is active
+                    protect = brain_mask.astype(bool)
+                    vol_clean[protect] = volume[protect]
+                    # Recompute brain_only from the cleaned volume
+                    brain_only = (vol_clean * brain_mask).astype(volume.dtype)
+
                 result["brain_mask"] = brain_mask
                 result["brain_only"] = brain_only
             except Exception as exc:
