@@ -81,10 +81,12 @@ def fill_zeros_with_background(
     corner_z: int = 101,
 ):
     """
-    Fill zero-valued pixels with the mean background value from corner regions.
+    Fill empty pixels (value <= background minimum) with the mean background
+    value sampled from corner regions.
 
-    Useful when the stack contains black gaps or padded regions that would
-    create artificial boundaries during processing.
+    Uses corner sampling to define both the fill value (mean) and the
+    emptiness threshold (min), so it catches exact zeros AND very small
+    non-zero values from the scanner noise floor.
 
     Parameters
     ----------
@@ -94,19 +96,22 @@ def fill_zeros_with_background(
 
     Returns
     -------
-    volume_filled : copy of volume with zero pixels replaced by mean background
+    volume_filled : copy of volume with empty pixels replaced by mean background
     bg_mean       : mean background intensity used for filling
     n_filled      : number of voxels filled
     """
     bg_values = _sample_corners(volume, corner_xy, corner_z)
+    bg_min  = float(bg_values.min())
     bg_mean = float(bg_values.mean())
 
-    print(f"   Background mean (corners): {bg_mean:.2f}")
+    print(f"   Background — min: {bg_min:.2f}  mean: {bg_mean:.2f}  (corners)")
 
-    zero_mask = volume == 0
-    n_filled  = int(zero_mask.sum())
-    print(f"   Filling {n_filled:,} zero voxels ({100.*n_filled/volume.size:.1f}% of stack)")
+    # Treat any pixel at or below the background minimum as empty
+    empty_mask = volume <= bg_min
+    n_filled   = int(empty_mask.sum())
+    print(f"   Filling {n_filled:,} empty voxels (value <= {bg_min:.2f})"
+          f"  ({100.*n_filled/volume.size:.1f}% of stack)")
 
     result = volume.copy()
-    result[zero_mask] = np.array(bg_mean, dtype=volume.dtype)
+    result[empty_mask] = np.array(bg_mean, dtype=volume.dtype)
     return result, bg_mean, n_filled
