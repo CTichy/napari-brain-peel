@@ -20,7 +20,7 @@ from qtpy.QtCore import Qt, QTimer
 
 from ._io import load_file
 from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
-from ._background import remove_background, fill_zeros_with_background
+from ._background import remove_background, fill_outside_brain_with_background
 
 _CONFIG_PATH = Path.home() / ".config" / "napari-skin-remover" / "config.json"
 
@@ -186,7 +186,7 @@ class SkinRemoverWidget(QWidget):
         self._bg_group = QButtonGroup(self)
         self._bg_off_rb   = QRadioButton("Off")
         self._bg_remove_rb = QRadioButton("Remove background")
-        self._bg_fill_rb  = QRadioButton("Fill zeros with background")
+        self._bg_fill_rb  = QRadioButton("Fill outside-brain with background")
         self._bg_group.addButton(self._bg_off_rb,    0)
         self._bg_group.addButton(self._bg_remove_rb, 1)
         self._bg_group.addButton(self._bg_fill_rb,   2)
@@ -464,10 +464,10 @@ class SkinRemoverWidget(QWidget):
                     vol_proc[protect] = volume[protect]
                     brain_only = (vol_proc * brain_mask).astype(volume.dtype)
                 elif bg_mode == 2:
-                    print("   Filling zeros with background (whole stack)...")
-                    vol_proc, *_ = fill_zeros_with_background(volume)
-                    # No protection — zeros inside the brain need filling too
-                    brain_only = (vol_proc * brain_mask).astype(volume.dtype)
+                    print("   Filling outside-brain with background noise floor...")
+                    brain_only, _ = fill_outside_brain_with_background(
+                        volume, brain_mask
+                    )
 
                 result["brain_mask"] = brain_mask
                 result["brain_only"] = brain_only

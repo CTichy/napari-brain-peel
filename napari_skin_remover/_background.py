@@ -75,43 +75,43 @@ def remove_background(
     return result, bg_min, bg_max, n_removed
 
 
-def fill_zeros_with_background(
+def fill_outside_brain_with_background(
     volume: np.ndarray,
+    brain_mask: np.ndarray,
     corner_xy: int = 50,
     corner_z: int = 101,
 ):
     """
-    Fill empty pixels (value <= background minimum) with the mean background
-    value sampled from corner regions.
+    Replace outside-brain pixels with the mean background value from corners.
 
-    Uses corner sampling to define both the fill value (mean) and the
-    emptiness threshold (min), so it catches exact zeros AND very small
-    non-zero values from the scanner noise floor.
+    Produces a full-volume output that looks like the original stack but
+    with skin and all tissue outside the brain replaced by the natural
+    scanner noise floor — no black hole, no hard edge.
+
+    Inside brain  → original pixel values preserved
+    Outside brain → replaced with bg_mean (scanner noise floor)
 
     Parameters
     ----------
-    volume    : (Z, Y, X) ndarray
-    corner_xy : pixels in X and Y to sample from each corner
-    corner_z  : Z slices to sample from the top
+    volume     : (Z, Y, X) ndarray — original stack
+    brain_mask : (Z, Y, X) uint8   — 1 inside brain, 0 outside
+    corner_xy  : pixels in X and Y to sample from each corner
+    corner_z   : Z slices to sample from the top
 
     Returns
     -------
-    volume_filled : copy of volume with empty pixels replaced by mean background
+    volume_filled : full stack with outside-brain replaced by bg_mean
     bg_mean       : mean background intensity used for filling
-    n_filled      : number of voxels filled
     """
     bg_values = _sample_corners(volume, corner_xy, corner_z)
-    bg_min  = float(bg_values.min())
-    bg_mean = float(bg_values.mean())
+    bg_mean   = float(bg_values.mean())
 
-    print(f"   Background — min: {bg_min:.2f}  mean: {bg_mean:.2f}  (corners)")
-
-    # Treat any pixel at or below the background minimum as empty
-    empty_mask = volume <= bg_min
-    n_filled   = int(empty_mask.sum())
-    print(f"   Filling {n_filled:,} empty voxels (value <= {bg_min:.2f})"
+    outside = ~brain_mask.astype(bool)
+    n_filled = int(outside.sum())
+    print(f"   Background mean (corners): {bg_mean:.2f}")
+    print(f"   Filling {n_filled:,} outside-brain voxels with background"
           f"  ({100.*n_filled/volume.size:.1f}% of stack)")
 
     result = volume.copy()
-    result[empty_mask] = np.array(bg_mean, dtype=volume.dtype)
-    return result, bg_mean, n_filled
+    result[outside] = np.array(bg_mean, dtype=volume.dtype)
+    return result, bg_mean
