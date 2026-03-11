@@ -29,7 +29,7 @@ import numpy as np
 
 def _estimate_background(volume, brain_mask):
     """
-    Estimate background from the median of brain pixels (post-skin-removal) ± 10%.
+    Estimate background from the mode of brain pixels (post-skin-removal) ± 10%.
 
     Only pixels inside the brain mask are used for the probe, giving a clean
     estimate of the background within the brain region.
@@ -37,11 +37,12 @@ def _estimate_background(volume, brain_mask):
     Returns bg_values (pool of background pixels), bg_median, bg_min, bg_max.
     """
     brain_pixels = volume[brain_mask.astype(bool)].ravel()
-    bg_median    = float(np.median(brain_pixels))
-    bg_min       = bg_median * 0.90
-    bg_max       = bg_median * 1.10
+    hist, edges  = np.histogram(brain_pixels, bins=1000)
+    bg_mode      = float(edges[np.argmax(hist)] + (edges[1] - edges[0]) / 2)
+    bg_min       = bg_mode * 0.90
+    bg_max       = bg_mode * 1.10
     bg_values    = brain_pixels[(brain_pixels >= bg_min) & (brain_pixels <= bg_max)]
-    print(f"   Background probe (inside brain): median={bg_median:.2f}"
+    print(f"   Background probe (inside brain): mode={bg_mode:.2f}"
           f"  range=[{bg_min:.2f}, {bg_max:.2f}]"
           f"  ({len(bg_values):,} voxels = {100.*len(bg_values)/volume.size:.1f}% of stack)")
     return bg_values, bg_median, bg_min, bg_max
