@@ -185,9 +185,9 @@ class SkinRemoverWidget(QWidget):
 
         self._bg_group = QButtonGroup(self)
         self._bg_off_rb    = QRadioButton("Off")
-        self._bg_mode1_rb  = QRadioButton("1 — Remove outside-brain background")
-        self._bg_mode2_rb  = QRadioButton("2 — Remove globally (full stack)")
-        self._bg_mode3_rb  = QRadioButton("3 — Fill sub-background with random noise")
+        self._bg_mode1_rb  = QRadioButton("1 — Remove background outside brain (inference)")
+        self._bg_mode2_rb  = QRadioButton("2 — Remove background globally (full stack)")
+        self._bg_mode3_rb  = QRadioButton("3 — Fill removed with random background")
         self._bg_group.addButton(self._bg_off_rb,   0)
         self._bg_group.addButton(self._bg_mode1_rb, 1)
         self._bg_group.addButton(self._bg_mode2_rb, 2)
