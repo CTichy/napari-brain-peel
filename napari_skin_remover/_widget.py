@@ -204,7 +204,7 @@ class SkinRemoverWidget(QWidget):
         self._tol_slider = QSlider(Qt.Horizontal)
         self._tol_slider.setMinimum(-100)  # -1.00%
         self._tol_slider.setMaximum(100)   # +1.00%
-        self._tol_slider.setValue(5)       # +0.05% default
+        self._tol_slider.setValue(50)      # +0.50% default
         self._tol_val = QLabel("+0.05")
         self._tol_val.setFixedWidth(42)
         tol_row.addWidget(self._tol_slider)
