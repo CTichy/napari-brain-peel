@@ -24,7 +24,7 @@ Three processing modes:
 import numpy as np
 
 
-def _sample_corners(volume, corner_xy=50, corner_z=101):
+def _sample_corners(volume, corner_xy=50, corner_z=50):
     """
     Return flat array of all pixel values from the two left-side corners.
 
@@ -42,7 +42,7 @@ def _sample_corners(volume, corner_xy=50, corner_z=101):
     return np.concatenate([corner_tl.ravel(), corner_bl.ravel()])
 
 
-def _threshold(volume, corner_xy=50, corner_z=101, tolerance_pct=0.05):
+def _threshold(volume, corner_xy=50, corner_z=50, tolerance_pct=0.05):
     """
     Compute the background threshold and background mask.
 
@@ -68,7 +68,7 @@ def remove_outside_brain(
     volume: np.ndarray,
     brain_mask: np.ndarray,
     corner_xy: int = 50,
-    corner_z: int = 101,
+    corner_z: int = 50,
     tolerance_pct: float = 0.05,
 ):
     """
@@ -99,7 +99,7 @@ def remove_outside_brain(
 def remove_global(
     volume: np.ndarray,
     corner_xy: int = 50,
-    corner_z: int = 101,
+    corner_z: int = 50,
     tolerance_pct: float = 0.05,
 ):
     """
@@ -130,7 +130,7 @@ def fill_outside_brain_random(
     volume: np.ndarray,
     brain_mask: np.ndarray,
     corner_xy: int = 50,
-    corner_z: int = 101,
+    corner_z: int = 50,
 ):
     """
     Fill all pixels zeroed by skin removal (outside the brain mask) with

@@ -212,8 +212,8 @@ class SkinRemoverWidget(QWidget):
         layout.addLayout(tol_row)
 
         bg_note = QLabel(
-            "  Corners: top-left (Y=0-49, X=0-49, Z=0-100)\n"
-            "  and bottom-left (Y=H-50..H, X=0-49, Z=0-100)\n"
+            "  Corners: top-left (Y=0-49, X=0-49, Z=0-49)\n"
+            "  and bottom-left (Y=H-50..H, X=0-49, Z=0-49)\n"
             "  Mode 1 & 2 use tolerance  |  Mode 3: no tolerance"
         )
         bg_note.setStyleSheet("color: #aaa; font-size: 10px;")
