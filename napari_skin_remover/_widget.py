@@ -21,6 +21,7 @@ from qtpy.QtCore import Qt, QTimer
 from ._io import load_file
 from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
 from ._background import remove_outside_brain, remove_global, fill_outside_brain_random
+from ._labeling import create_labels
 
 _CONFIG_PATH = Path.home() / ".config" / "napari-skin-remover" / "config.json"
 
@@ -237,6 +238,81 @@ class SkinRemoverWidget(QWidget):
         self._status_lbl.setWordWrap(True)
         layout.addWidget(self._status_lbl)
 
+        layout.addWidget(_sep())
+
+        # ── Create Labels ──────────────────────────────────────────── #
+        lbl_title = QLabel("<b>Create 3D Labels</b>")
+        lbl_title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(lbl_title)
+
+        lbl_note = QLabel(
+            "  Reads active brain_only layer (run option 2 first).\n"
+            "  Smooths contours, labels 2D blobs per slice,\n"
+            "  links across slices by overlap."
+        )
+        lbl_note.setStyleSheet("color: #aaa; font-size: 10px;")
+        layout.addWidget(lbl_note)
+
+        # σ XY
+        sxy_row = QHBoxLayout()
+        sxy_row.addWidget(QLabel("  Smooth σ XY:"))
+        self._sxy_slider = QSlider(Qt.Horizontal)
+        self._sxy_slider.setMinimum(0)
+        self._sxy_slider.setMaximum(50)   # 0.0–5.0, step 0.1
+        self._sxy_slider.setValue(10)     # default 1.0
+        self._sxy_val = QLabel("1.0")
+        self._sxy_val.setFixedWidth(28)
+        sxy_row.addWidget(self._sxy_slider)
+        sxy_row.addWidget(self._sxy_val)
+        layout.addLayout(sxy_row)
+
+        # σ Z
+        sz_row = QHBoxLayout()
+        sz_row.addWidget(QLabel("  Smooth σ Z:"))
+        self._sz_slider = QSlider(Qt.Horizontal)
+        self._sz_slider.setMinimum(0)
+        self._sz_slider.setMaximum(50)
+        self._sz_slider.setValue(5)       # default 0.5
+        self._sz_val = QLabel("0.5")
+        self._sz_val.setFixedWidth(28)
+        sz_row.addWidget(self._sz_slider)
+        sz_row.addWidget(self._sz_val)
+        layout.addLayout(sz_row)
+
+        # Min overlap %
+        ovlp_row = QHBoxLayout()
+        ovlp_row.addWidget(QLabel("  Min overlap (%):"))
+        self._ovlp_slider = QSlider(Qt.Horizontal)
+        self._ovlp_slider.setMinimum(1)
+        self._ovlp_slider.setMaximum(100)
+        self._ovlp_slider.setValue(10)    # default 10%
+        self._ovlp_val = QLabel("10")
+        self._ovlp_val.setFixedWidth(28)
+        ovlp_row.addWidget(self._ovlp_slider)
+        ovlp_row.addWidget(self._ovlp_val)
+        layout.addLayout(ovlp_row)
+
+        # Min blob area
+        area_row = QHBoxLayout()
+        area_row.addWidget(QLabel("  Min blob area (px²):"))
+        self._area_slider = QSlider(Qt.Horizontal)
+        self._area_slider.setMinimum(1)
+        self._area_slider.setMaximum(500)
+        self._area_slider.setValue(50)    # default 50 px²
+        self._area_val = QLabel("50")
+        self._area_val.setFixedWidth(28)
+        area_row.addWidget(self._area_slider)
+        area_row.addWidget(self._area_val)
+        layout.addLayout(area_row)
+
+        self._labels_btn = QPushButton("Create Labels")
+        self._labels_btn.setStyleSheet("QPushButton { padding: 5px; }")
+        layout.addWidget(self._labels_btn)
+
+        self._labels_status_lbl = QLabel("")
+        self._labels_status_lbl.setWordWrap(True)
+        layout.addWidget(self._labels_status_lbl)
+
         layout.addStretch()
         self.setLayout(layout)
 
@@ -258,6 +334,19 @@ class SkinRemoverWidget(QWidget):
         )
         self._bg_group.buttonClicked.connect(self._on_bg_mode_changed)
         self._run_btn.clicked.connect(self._on_run)
+        self._sxy_slider.valueChanged.connect(
+            lambda v: self._sxy_val.setText(f"{v/10:.1f}")
+        )
+        self._sz_slider.valueChanged.connect(
+            lambda v: self._sz_val.setText(f"{v/10:.1f}")
+        )
+        self._ovlp_slider.valueChanged.connect(
+            lambda v: self._ovlp_val.setText(str(v))
+        )
+        self._area_slider.valueChanged.connect(
+            lambda v: self._area_val.setText(str(v))
+        )
+        self._labels_btn.clicked.connect(self._on_create_labels)
         self._viewer.layers.events.inserted.connect(self._refresh_layer_info)
         self._viewer.layers.events.removed.connect(self._refresh_layer_info)
         self._viewer.layers.selection.events.changed.connect(self._refresh_layer_info)
@@ -548,6 +637,83 @@ class SkinRemoverWidget(QWidget):
 
             print(f"{'='*70}")
             print("SKIN-REMOVER COMPLETE")
+            print(f"{'='*70}\n")
+
+        timer.timeout.connect(_poll)
+        timer.start(500)
+
+    def _on_create_labels(self):
+        # Read active layer
+        target = self._active_layer()
+        if target is None:
+            self._labels_status_lbl.setText("Select a brain_only layer first.")
+            return
+        volume = np.asarray(target.data)
+        if volume.ndim != 3:
+            self._labels_status_lbl.setText(
+                f"ERROR: 3D volume required, got {volume.ndim}D."
+            )
+            return
+
+        sigma_xy        = self._sxy_slider.value()  / 10.0
+        sigma_z         = self._sz_slider.value()   / 10.0
+        min_overlap_pct = float(self._ovlp_slider.value())
+        min_blob_area   = self._area_slider.value()
+        stem            = target.name
+        scale           = tuple(float(v) for v in target.scale) if len(target.scale) == 3 else (1., 1., 1.)
+
+        self._labels_btn.setEnabled(False)
+        self._labels_status_lbl.setText("Running...")
+
+        print(f"\n{'='*70}")
+        print(f"CREATE LABELS — {stem}  shape={volume.shape}")
+        print(f"σ_xy={sigma_xy}  σ_z={sigma_z}  min_overlap={min_overlap_pct}%  min_area={min_blob_area}px²")
+        print(f"{'='*70}")
+
+        result = {}
+
+        def _worker():
+            try:
+                labels = create_labels(
+                    volume,
+                    sigma_xy=sigma_xy,
+                    sigma_z=sigma_z,
+                    min_overlap_pct=min_overlap_pct,
+                    min_blob_area=min_blob_area,
+                )
+                result["labels"] = labels
+            except Exception as exc:
+                traceback.print_exc()
+                result["error"] = str(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        timer = QTimer(self)
+
+        def _poll():
+            if thread.is_alive():
+                return
+            timer.stop()
+
+            if "error" in result:
+                self._labels_status_lbl.setText(f"ERROR: {result['error']}")
+                self._labels_btn.setEnabled(True)
+                return
+
+            labels     = result["labels"]
+            n_labels   = int(labels.max())
+            lname      = f"{stem}_labels"
+
+            if lname in self._viewer.layers:
+                self._viewer.layers.remove(lname)
+
+            self._viewer.add_labels(labels, name=lname, scale=scale)
+            self._labels_status_lbl.setText(f"Done — {n_labels} labels.")
+            self._labels_btn.setEnabled(True)
+
+            print(f"{'='*70}")
+            print(f"CREATE LABELS COMPLETE — {n_labels} objects")
             print(f"{'='*70}\n")
 
         timer.timeout.connect(_poll)
