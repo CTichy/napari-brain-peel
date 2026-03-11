@@ -2,19 +2,23 @@
 _background.py — Corner-based background processing.
 
 Samples two left-side corners of the stack to estimate the background
-intensity distribution.
+intensity ceiling (bg_max). All three modes use a single-sided threshold:
+
+  threshold = bg_max + tolerance
+
+  pixels <= threshold  →  treated as background
+  pixels >  threshold  →  treated as signal (kept)
 
 Corner regions sampled (both on left side, X=0..corner_xy):
-  Top-left    : Z=0..corner_z,  Y=0..corner_xy,        X=0..corner_xy
-  Bottom-left : Z=0..corner_z,  Y=(H-corner_xy)..H,    X=0..corner_xy
+  Top-left    : Z=0..corner_z,  Y=0..corner_xy,      X=0..corner_xy
+  Bottom-left : Z=0..corner_z,  Y=H-corner_xy..H,    X=0..corner_xy
 
 Three processing modes:
-  1. remove_outside_brain   — inference-guided: zero background pixels
-                              outside the brain mask only
-  2. remove_global          — zero all pixels in the full stack that fall
-                              within the background range ± tolerance
-  3. fill_random_background — fill all sub-background pixels everywhere
-                              with random samples drawn from the corner pixels
+  1. remove_outside_brain  — inference-guided: zero background pixels
+                             outside the brain mask only
+  2. remove_global         — zero all background pixels in the full stack
+  3. fill_random_background— replace background pixels with random samples
+                             drawn from the corner pixel distribution
 """
 
 import numpy as np
@@ -28,24 +32,32 @@ def _sample_corners(volume, corner_xy=50, corner_z=101):
     Bottom-left : Z=0..corner_z,  Y=H-corner_xy..H,    X=0..corner_xy
     """
     Z, Y, X = volume.shape
-    z_end        = min(corner_z, Z)
-    y_end        = min(corner_xy, Y)
-    x_end        = min(corner_xy, X)
-    y_start_bot  = max(0, Y - corner_xy)
+    z_end       = min(corner_z, Z)
+    y_end       = min(corner_xy, Y)
+    x_end       = min(corner_xy, X)
+    y_start_bot = max(0, Y - corner_xy)
 
     corner_tl = volume[:z_end, :y_end,       :x_end]
     corner_bl = volume[:z_end, y_start_bot:, :x_end]
     return np.concatenate([corner_tl.ravel(), corner_bl.ravel()])
 
 
-def _bg_bounds(volume, corner_xy=50, corner_z=101, tolerance_pct=0.05):
-    """Return (bg_values, bg_min, bg_max, low, high) for the given tolerance."""
+def _threshold(volume, corner_xy=50, corner_z=101, tolerance_pct=0.05):
+    """
+    Compute the background threshold and background mask.
+
+    threshold = bg_max + tolerance  (tolerance can be negative)
+    background mask = pixels <= threshold
+
+    Returns bg_values, bg_max, threshold, bg_mask
+    """
     bg_values  = _sample_corners(volume, corner_xy, corner_z)
-    bg_min     = float(bg_values.min())
     bg_max     = float(bg_values.max())
     data_range = float(volume.max()) - float(volume.min())
     tol        = data_range * (tolerance_pct / 100.0)
-    return bg_values, bg_min, bg_max, bg_min - tol, bg_max + tol
+    thresh     = bg_max + tol
+    bg_mask    = volume <= thresh
+    return bg_values, bg_max, thresh, bg_mask
 
 
 # ------------------------------------------------------------------ #
@@ -60,29 +72,24 @@ def remove_outside_brain(
     tolerance_pct: float = 0.05,
 ):
     """
-    Zero background pixels that are OUTSIDE the brain mask.
+    Zero background pixels OUTSIDE the brain mask.
     Pixels inside the brain are always preserved.
-
-    Returns
-    -------
-    result    : copy of volume with outside-brain background pixels zeroed
-    bg_min, bg_max, n_removed
     """
-    _, bg_min, bg_max, low, high = _bg_bounds(volume, corner_xy, corner_z, tolerance_pct)
-
-    print(f"   Background range (corners): [{bg_min:.1f}, {bg_max:.1f}]")
-    print(f"   Tolerance: {tolerance_pct:+.3f}%  →  zeroing [{low:.1f}, {high:.1f}]")
-
+    bg_values, bg_max, thresh, bg_mask = _threshold(
+        volume, corner_xy, corner_z, tolerance_pct
+    )
     outside  = ~brain_mask.astype(bool)
-    bg_mask  = (volume >= low) & (volume <= high)
     to_zero  = outside & bg_mask
     n_removed = int(to_zero.sum())
+
+    print(f"   Background ceiling (corners): {bg_max:.1f}"
+          f"  tol={tolerance_pct:+.3f}%  →  threshold={thresh:.1f}")
     print(f"   Removed {n_removed:,} outside-brain background voxels"
           f"  ({100.*n_removed/volume.size:.1f}% of stack)")
 
     result = volume.copy()
     result[to_zero] = 0
-    return result, bg_min, bg_max, n_removed
+    return result, bg_max, thresh, n_removed
 
 
 # ------------------------------------------------------------------ #
@@ -96,28 +103,23 @@ def remove_global(
     tolerance_pct: float = 0.05,
 ):
     """
-    Zero ALL pixels in the full stack within the background range ± tolerance.
-    tolerance_pct can be negative (shrinks the range) or positive (expands it).
-    Useful range: -1.0% to +1.0%.
-
-    Returns
-    -------
-    result    : copy of volume with matching pixels set to 0
-    bg_min, bg_max, n_removed
+    Zero ALL pixels in the full stack at or below the background threshold.
+    Negative tolerance shrinks the threshold (removes less),
+    positive tolerance raises it (removes more).
     """
-    _, bg_min, bg_max, low, high = _bg_bounds(volume, corner_xy, corner_z, tolerance_pct)
+    bg_values, bg_max, thresh, bg_mask = _threshold(
+        volume, corner_xy, corner_z, tolerance_pct
+    )
+    n_removed = int(bg_mask.sum())
 
-    print(f"   Background range (corners): [{bg_min:.1f}, {bg_max:.1f}]")
-    print(f"   Tolerance: {tolerance_pct:+.3f}%  →  zeroing [{low:.1f}, {high:.1f}]")
-
-    mask = (volume >= low) & (volume <= high)
-    n_removed = int(mask.sum())
+    print(f"   Background ceiling (corners): {bg_max:.1f}"
+          f"  tol={tolerance_pct:+.3f}%  →  threshold={thresh:.1f}")
     print(f"   Removed {n_removed:,} voxels globally"
           f"  ({100.*n_removed/volume.size:.1f}% of stack)")
 
     result = volume.copy()
-    result[mask] = 0
-    return result, bg_min, bg_max, n_removed
+    result[bg_mask] = 0
+    return result, bg_max, thresh, n_removed
 
 
 # ------------------------------------------------------------------ #
@@ -131,27 +133,19 @@ def fill_random_background(
     tolerance_pct: float = 0.05,
 ):
     """
-    Replace pixels within the background range (≤ bg_max + tolerance) with
-    random samples drawn from the actual corner pixel distribution.
+    Replace all background pixels with random samples drawn from the
+    actual corner pixel distribution.
 
-    Operates on the same pixel set as remove_global but fills with random
-    noise instead of zeroing — preserving the natural scanner texture.
-
-    Returns
-    -------
-    result   : copy of volume with background pixels randomly re-sampled
-    bg_min, bg_max : background bounds from corners
-    n_filled : number of voxels filled
+    Uses random sampling (not mean) so the filled regions match the
+    natural texture/noise of the scanner background.
     """
-    bg_values, bg_min, bg_max, low, high = _bg_bounds(
+    bg_values, bg_max, thresh, bg_mask = _threshold(
         volume, corner_xy, corner_z, tolerance_pct
     )
+    n_filled = int(bg_mask.sum())
 
-    empty_mask = (volume >= low) & (volume <= high)
-    n_filled   = int(empty_mask.sum())
-
-    print(f"   Background range (corners): [{bg_min:.1f}, {bg_max:.1f}]"
-          f"  tol={tolerance_pct:+.3f}%  →  [{low:.1f}, {high:.1f}]")
+    print(f"   Background ceiling (corners): {bg_max:.1f}"
+          f"  tol={tolerance_pct:+.3f}%  →  threshold={thresh:.1f}")
     print(f"   Filling {n_filled:,} background voxels with random noise"
           f"  ({100.*n_filled/volume.size:.1f}% of stack)"
           f"  from {len(bg_values):,} corner samples")
@@ -159,5 +153,5 @@ def fill_random_background(
     result = volume.copy()
     if n_filled > 0:
         random_fill = np.random.choice(bg_values, size=n_filled, replace=True)
-        result[empty_mask] = random_fill.astype(volume.dtype)
-    return result, bg_min, bg_max, n_filled
+        result[bg_mask] = random_fill.astype(volume.dtype)
+    return result, bg_max, thresh, n_filled
