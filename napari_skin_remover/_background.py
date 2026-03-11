@@ -128,32 +128,36 @@ def fill_random_background(
     volume: np.ndarray,
     corner_xy: int = 50,
     corner_z: int = 101,
+    tolerance_pct: float = 0.05,
 ):
     """
-    Fill all pixels below the background minimum with random samples
-    drawn from the actual corner pixel distribution.
+    Replace pixels within the background range (≤ bg_max + tolerance) with
+    random samples drawn from the actual corner pixel distribution.
 
-    Uses random sampling (not mean) so the filled regions match the
-    natural texture/noise of the scanner background.
+    Operates on the same pixel set as remove_global but fills with random
+    noise instead of zeroing — preserving the natural scanner texture.
 
     Returns
     -------
-    result   : copy of volume with sub-background pixels randomly filled
-    bg_min   : threshold used to detect sub-background pixels
+    result   : copy of volume with background pixels randomly re-sampled
+    bg_min, bg_max : background bounds from corners
     n_filled : number of voxels filled
     """
-    bg_values = _sample_corners(volume, corner_xy, corner_z)
-    bg_min    = float(bg_values.min())
+    bg_values, bg_min, bg_max, low, high = _bg_bounds(
+        volume, corner_xy, corner_z, tolerance_pct
+    )
 
-    empty_mask = volume < bg_min
+    empty_mask = (volume >= low) & (volume <= high)
     n_filled   = int(empty_mask.sum())
 
-    print(f"   Background — min: {bg_min:.2f}  (corners, {len(bg_values):,} samples)")
-    print(f"   Filling {n_filled:,} sub-background voxels with random noise"
-          f"  ({100.*n_filled/volume.size:.3f}% of stack)")
+    print(f"   Background range (corners): [{bg_min:.1f}, {bg_max:.1f}]"
+          f"  tol={tolerance_pct:+.3f}%  →  [{low:.1f}, {high:.1f}]")
+    print(f"   Filling {n_filled:,} background voxels with random noise"
+          f"  ({100.*n_filled/volume.size:.1f}% of stack)"
+          f"  from {len(bg_values):,} corner samples")
 
     result = volume.copy()
     if n_filled > 0:
         random_fill = np.random.choice(bg_values, size=n_filled, replace=True)
         result[empty_mask] = random_fill.astype(volume.dtype)
-    return result, bg_min, n_filled
+    return result, bg_min, bg_max, n_filled
