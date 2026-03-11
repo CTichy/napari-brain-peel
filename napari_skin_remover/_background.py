@@ -45,7 +45,7 @@ def _estimate_background(volume, brain_mask):
     print(f"   Background probe (inside brain): mode={bg_mode:.2f}"
           f"  range=[{bg_min:.2f}, {bg_max:.2f}]"
           f"  ({len(bg_values):,} voxels = {100.*len(bg_values)/volume.size:.1f}% of stack)")
-    return bg_values, bg_median, bg_min, bg_max
+    return bg_values, bg_mode, bg_min, bg_max
 
 
 def _threshold(volume, brain_mask, tolerance_pct=0.05):
