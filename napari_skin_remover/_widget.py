@@ -20,7 +20,7 @@ from qtpy.QtCore import Qt, QTimer
 
 from ._io import load_file
 from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
-from ._background import remove_background, fill_outside_brain_with_background
+from ._background import remove_outside_brain, remove_global, fill_random_background
 
 _CONFIG_PATH = Path.home() / ".config" / "napari-skin-remover" / "config.json"
 
@@ -180,37 +180,41 @@ class SkinRemoverWidget(QWidget):
 
         layout.addWidget(_sep())
 
-        # Background processing — corner sampling, two modes
-        layout.addWidget(QLabel("Background (corner sampling):"))
+        # Background processing — left-side corner sampling, three modes
+        layout.addWidget(QLabel("Background (left-side corners):"))
 
         self._bg_group = QButtonGroup(self)
-        self._bg_off_rb   = QRadioButton("Off")
-        self._bg_remove_rb = QRadioButton("Remove background")
-        self._bg_fill_rb  = QRadioButton("Fill outside-brain with background")
-        self._bg_group.addButton(self._bg_off_rb,    0)
-        self._bg_group.addButton(self._bg_remove_rb, 1)
-        self._bg_group.addButton(self._bg_fill_rb,   2)
-        self._bg_remove_rb.setChecked(True)
+        self._bg_off_rb    = QRadioButton("Off")
+        self._bg_mode1_rb  = QRadioButton("1 — Remove outside-brain background")
+        self._bg_mode2_rb  = QRadioButton("2 — Remove globally (full stack)")
+        self._bg_mode3_rb  = QRadioButton("3 — Fill sub-background with random noise")
+        self._bg_group.addButton(self._bg_off_rb,   0)
+        self._bg_group.addButton(self._bg_mode1_rb, 1)
+        self._bg_group.addButton(self._bg_mode2_rb, 2)
+        self._bg_group.addButton(self._bg_mode3_rb, 3)
+        self._bg_off_rb.setChecked(True)
         layout.addWidget(self._bg_off_rb)
-        layout.addWidget(self._bg_remove_rb)
-        layout.addWidget(self._bg_fill_rb)
+        layout.addWidget(self._bg_mode1_rb)
+        layout.addWidget(self._bg_mode2_rb)
+        layout.addWidget(self._bg_mode3_rb)
 
         tol_row = QHBoxLayout()
-        tol_row.addWidget(QLabel("  Tolerance (%):"))
+        self._tol_lbl = QLabel("  Tolerance (%):")
+        tol_row.addWidget(self._tol_lbl)
         self._tol_slider = QSlider(Qt.Horizontal)
-        self._tol_slider.setMinimum(1)    # 0.01%
-        self._tol_slider.setMaximum(500)  # 5.00%
-        self._tol_slider.setValue(5)      # 0.05% default
-        self._tol_val = QLabel("0.05")
-        self._tol_val.setFixedWidth(36)
+        self._tol_slider.setMinimum(-100)  # -1.00%
+        self._tol_slider.setMaximum(100)   # +1.00%
+        self._tol_slider.setValue(5)       # +0.05% default
+        self._tol_val = QLabel("+0.05")
+        self._tol_val.setFixedWidth(42)
         tol_row.addWidget(self._tol_slider)
         tol_row.addWidget(self._tol_val)
         layout.addLayout(tol_row)
 
         bg_note = QLabel(
-            "  Corners: Z=0-100, Y=0-49, X=0-49\n"
-            "  and Z=0-100, Y=0-49, X=(W-50)-(W-1)\n"
-            "  (Tolerance only used in Remove mode)"
+            "  Corners: top-left (Y=0-49, X=0-49, Z=0-100)\n"
+            "  and bottom-left (Y=H-50..H, X=0-49, Z=0-100)\n"
+            "  Mode 1 & 2 use tolerance  |  Mode 3: no tolerance"
         )
         bg_note.setStyleSheet("color: #aaa; font-size: 10px;")
         layout.addWidget(bg_note)
@@ -251,7 +255,7 @@ class SkinRemoverWidget(QWidget):
             lambda v: self._erosion_val.setText(str(v))
         )
         self._tol_slider.valueChanged.connect(
-            lambda v: self._tol_val.setText(f"{v / 100:.2f}")
+            lambda v: self._tol_val.setText(f"{v/100:+.2f}")
         )
         self._bg_group.buttonClicked.connect(self._on_bg_mode_changed)
         self._run_btn.clicked.connect(self._on_run)
@@ -267,10 +271,12 @@ class SkinRemoverWidget(QWidget):
         self._status_lbl.setText(f"Status: {msg}")
 
     def _on_bg_mode_changed(self, btn):
-        """Enable tolerance slider only in Remove mode."""
-        remove_mode = self._bg_remove_rb.isChecked()
-        self._tol_slider.setEnabled(remove_mode)
-        self._tol_val.setEnabled(remove_mode)
+        """Enable/disable tolerance slider depending on mode."""
+        mode = self._bg_group.checkedId()
+        has_tol = mode in (1, 2)
+        self._tol_slider.setEnabled(has_tol)
+        self._tol_val.setEnabled(has_tol)
+        self._tol_lbl.setEnabled(has_tol)
 
     def _get_layer_scale(self):
         """
@@ -439,7 +445,12 @@ class SkinRemoverWidget(QWidget):
         print(f"Model    : {model_path.name}")
         print(f"Threshold: {threshold}   Device: {device}")
         print(f"Erosion  : {erosion_voxels} voxel(s)")
-        bg_mode_str = {0: "OFF", 1: f"Remove (tol={bg_tolerance_pct}%)", 2: "Fill zeros"}[bg_mode]
+        bg_mode_str = {
+            0: "Off",
+            1: f"Remove outside-brain (tol={bg_tolerance_pct:+.2f}%)",
+            2: f"Remove globally (tol={bg_tolerance_pct:+.2f}%)",
+            3: "Fill sub-background with random noise",
+        }[bg_mode]
         print(f"BG mode  : {bg_mode_str}")
         print(f"Scale    : Z={scale[0]:.4f}  Y={scale[1]:.4f}  X={scale[2]:.4f} µm")
         print(f"{'='*70}")
@@ -453,21 +464,23 @@ class SkinRemoverWidget(QWidget):
                     volume, model_path, threshold, device, erosion_voxels
                 )
 
-                # Step 2: background processing AFTER inference, outside brain only.
-                # Pixels inside the brain mask are always protected.
+                # Step 2: optional background processing
                 if bg_mode == 1:
-                    print("   Background removal (outside brain mask only)...")
-                    vol_proc, *_ = remove_background(
-                        volume, tolerance_pct=bg_tolerance_pct
+                    # Remove background outside brain only — brain interior protected
+                    vol_proc, *_ = remove_outside_brain(
+                        volume, brain_mask, tolerance_pct=bg_tolerance_pct
                     )
-                    protect = brain_mask.astype(bool)
-                    vol_proc[protect] = volume[protect]
                     brain_only = (vol_proc * brain_mask).astype(volume.dtype)
                 elif bg_mode == 2:
-                    print("   Filling outside-brain with background noise floor...")
-                    brain_only, _ = fill_outside_brain_with_background(
-                        volume, brain_mask
+                    # Remove background globally across the full stack
+                    vol_proc, *_ = remove_global(
+                        volume, tolerance_pct=bg_tolerance_pct
                     )
+                    brain_only = (vol_proc * brain_mask).astype(volume.dtype)
+                elif bg_mode == 3:
+                    # Fill sub-background pixels with random noise from corners
+                    vol_proc, *_ = fill_random_background(volume)
+                    brain_only = (vol_proc * brain_mask).astype(volume.dtype)
 
                 result["brain_mask"] = brain_mask
                 result["brain_only"] = brain_only
