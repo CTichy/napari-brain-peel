@@ -202,7 +202,7 @@ class SkinRemoverWidget(QWidget):
         self._tol_lbl = QLabel("  Tolerance (%):")
         tol_row.addWidget(self._tol_lbl)
         self._tol_slider = QSlider(Qt.Horizontal)
-        self._tol_slider.setMinimum(-1000)  # -10.00%
+        self._tol_slider.setMinimum(-2000)  # -20.00%
         self._tol_slider.setMaximum(500)    # +5.00%
         self._tol_slider.setValue(5)       # +0.05% default
         self._tol_val = QLabel("+0.05")
