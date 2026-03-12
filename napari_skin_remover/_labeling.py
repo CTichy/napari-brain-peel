@@ -148,15 +148,19 @@ def create_labels(
             output[output == lbl] = 0
             removed += 1
 
-    # Re-number sequentially after volume filtering
+    # Re-number sequentially, sorted by volume: label 1 = largest, 2 = second largest...
     remaining = np.unique(output[output > 0])
+    volumes_sorted = sorted(
+        [(int((output == lbl).sum()), int(lbl)) for lbl in remaining],
+        reverse=True  # largest first
+    )
     lut2 = np.zeros(int(output.max()) + 1, dtype=np.int32)
-    for new_id, old_id in enumerate(remaining, start=1):
-        lut2[int(old_id)] = new_id
+    for new_id, (vol, old_id) in enumerate(volumes_sorted, start=1):
+        lut2[old_id] = new_id
     output = lut2[output]
 
     n_final = int(output.max())
     print(f"   3D blobs removed (< {min_volume} vox): {removed}")
-    print(f"   Final 3D labels: {n_final}")
+    print(f"   Final 3D labels: {n_final}  (label 1 = largest)")
 
     return output

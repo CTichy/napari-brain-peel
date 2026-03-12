@@ -55,7 +55,7 @@ That's it. All dependencies (PyTorch, MONAI, etc.) are installed automatically.
 The AI model is a large file (~220 MB) that is **not included in the plugin**. You need to download it separately.
 
 **Download the model here:**
-👉 [best_model_fullstack_v1_epoch460_dice9573.pth](https://cloud.technikum-wien.at/s/kYQ4qq3Jsn4xEyY)
+👉 [best_model_fullstack.pth](https://cloud.technikum-wien.at/s/kYQ4qq3Jsn4xEyY)
 
 **Where to save it:**
 
@@ -64,7 +64,7 @@ Create a folder called `models` anywhere on your computer that is easy to find. 
 ```
 Documents/
 └── brain-peel-model/
-    └── best_model_fullstack_v1_epoch460_dice9573.pth
+    └── best_model_fullstack.pth
 ```
 
 You will point the plugin to this file the first time you use it. **The plugin remembers the path** — you only need to do this once.
@@ -228,19 +228,18 @@ Click the **brain_only** layer in the Layers panel to select it, then switch to 
 
 **Range:** 0.0 to 5.0 — **Default: 1.0** — **Recommended: 1.5**
 
-Gaussian smoothing applied **within each 2D slice** (XY plane).
+Controls the **smoothness of blob contours within each 2D slice** (XY plane).
 
-- **Increases this value → rounder, softer blob outlines**
-- Merges very close pixels that belong to the same cell
-- Fills small gaps in the staining within a slice
-- **This is the main knob for contour softness** — adjust this first
+- Rounds jagged edges and fills tiny pixel-level gaps within the same slice
+- **This is the knob to adjust for softer, rounder blob outlines**
+- Keep this low — high values risk merging neighbouring cells within a slice
 
 | Value | Effect |
 |-------|--------|
 | 0.0 | No smoothing — raw jagged edges |
 | 1.0 | Light smoothing — fine details preserved |
-| **1.5** | **Good balance — smooth blobs, no over-merging** |
-| 3.0+ | Heavy smoothing — nearby cells start merging |
+| **1.5** | **Recommended — smooth solid blobs, cells stay separated** |
+| 3.0+ | Heavy smoothing — risk of merging nearby cells within the same slice |
 
 ---
 
@@ -248,20 +247,21 @@ Gaussian smoothing applied **within each 2D slice** (XY plane).
 
 **Range:** 0.0 to 5.0 — **Default: 0.5** — **Recommended: 3.0**
 
-Gaussian smoothing applied **between slices** (Z axis).
+Controls **cross-slice connectivity** — how easily blobs in neighbouring Z slices are recognised as part of the same 3D cell.
 
-- Controls how blobs are interpolated across Z slices
-- **Higher values → blobs connect more easily across slices**
-- Useful when a cell disappears for 1–2 slices and reappears (Z gaps)
+- A cell that disappears for 1–2 slices and reappears will be correctly linked with a higher σ Z
+- **σ Z and σ XY are NOT comparable values** — they serve completely different purposes
+- σ Z can safely be much larger than σ XY without risk of merging neighbouring cells
+
+> **Why is σ Z = 3.0 while σ XY = 1.5?**
+> Zebrafish confocal stacks are highly anisotropic: each Z slice is ~1 µm thick while each XY pixel is only ~0.17 µm. A σ Z of 3.0 voxels spans ~3 µm physically. A σ XY of 1.5 voxels spans only ~0.26 µm. They operate at completely different physical scales — a large σ Z does **not** cause the same over-merging risk as a large σ XY.
 
 | Value | Effect |
 |-------|--------|
-| 0.0 | No Z smoothing — each slice independent |
-| 0.5 | Minimal cross-slice connection |
-| **3.0** | **Good for zebrafish — fills Z gaps, connects fragmented cells** |
-| 5.0 | Very aggressive — might merge cells from different Z levels |
-
-> **Note:** Due to anisotropy (~5.75:1 Z:XY ratio in zebrafish), a larger σ Z is needed to achieve the same physical effect as a smaller σ XY.
+| 0.0 | No cross-slice smoothing — each slice fully independent |
+| 0.5 | Minimal — only immediately adjacent slices connected |
+| **3.0** | **Recommended for zebrafish — bridges 1–3 slice gaps within a cell** |
+| 5.0+ | Very aggressive — may link cells at different Z depths |
 
 ---
 

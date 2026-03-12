@@ -131,23 +131,23 @@ def fill_outside_brain_random(
     Inside brain  → original pixel values preserved
     Outside brain → random samples from background distribution
     """
-    bg_values, bg_median, bg_min, bg_max = _estimate_background(volume, brain_mask)
+    bg_values, bg_mode, _, _ = _estimate_background(volume, brain_mask)
 
-    # Gaussian filter: remove outliers beyond ±2σ from the bg pool
-    mu    = float(bg_values.mean())
-    sigma = float(bg_values.std())
-    bg_pool = bg_values[np.abs(bg_values - mu) <= 2.0 * sigma]
-    print(f"   Fill pool Gaussian: μ={mu:.2f}  σ={sigma:.2f}"
-          f"  →  [{mu-2*sigma:.1f}, {mu+2*sigma:.1f}]"
-          f"  ({len(bg_pool):,} / {len(bg_values):,} kept)")
+    # Fill range: mode ± 0.10% of data range
+    data_range = float(volume.max()) - float(volume.min())
+    tol        = data_range * 0.001   # 0.10%
+    low_fill   = bg_mode - tol
+    high_fill  = bg_mode + tol
 
     outside  = ~brain_mask.astype(bool)
     n_filled = int(outside.sum())
-    print(f"   Filling {n_filled:,} outside-brain voxels with random noise"
+    print(f"   Fill range: [{low_fill:.2f}, {high_fill:.2f}]"
+          f"  (mode={bg_mode:.2f} ± 0.10%)")
+    print(f"   Filling {n_filled:,} outside-brain voxels"
           f"  ({100.*n_filled/volume.size:.1f}% of stack)")
 
     result = volume.copy()
-    if n_filled > 0 and len(bg_pool) > 0:
-        random_fill = np.random.choice(bg_pool, size=n_filled, replace=True)
+    if n_filled > 0:
+        random_fill = np.random.uniform(low_fill, high_fill, size=n_filled)
         result[outside] = random_fill.astype(volume.dtype)
     return result, n_filled
