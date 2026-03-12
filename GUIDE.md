@@ -250,11 +250,16 @@ Controls the **smoothness of blob contours within each 2D slice** (XY plane).
 Controls **cross-slice connectivity** — how easily blobs in neighbouring Z slices are recognised as part of the same 3D cell.
 
 - A cell that disappears for 1–2 slices and reappears will be correctly linked with a higher σ Z
-- **σ Z and σ XY are NOT comparable values** — they serve completely different purposes
-- σ Z can safely be much larger than σ XY without risk of merging neighbouring cells
+- **σ Z and σ XY are NOT comparable values** — they serve completely different purposes and operate at different physical scales
 
 > **Why is σ Z = 3.0 while σ XY = 1.5?**
-> Zebrafish confocal stacks are highly anisotropic: each Z slice is ~1 µm thick while each XY pixel is only ~0.17 µm. A σ Z of 3.0 voxels spans ~3 µm physically. A σ XY of 1.5 voxels spans only ~0.26 µm. They operate at completely different physical scales — a large σ Z does **not** cause the same over-merging risk as a large σ XY.
+> Zebrafish confocal stacks are highly anisotropic: each Z slice is ~1 µm thick while each XY pixel is only ~0.17 µm. A σ Z of 3.0 voxels spans ~3 µm physically. A σ XY of 1.5 voxels spans only ~0.26 µm.
+>
+> Both sigmas carry a merging risk — but at different physical scales:
+> - σ XY = 1.5 risks merging cells that are ~0.26 µm apart in XY (very tight — happens easily in dense tissue)
+> - σ Z = 3.0 risks merging cells that are ~3 µm apart in Z (much less likely for microglia, which are typically 10–20 µm in diameter)
+>
+> **Conclusion:** σ Z = 3.0 is a validated safe choice for zebrafish microglia, but increasing it beyond 4–5 may start merging cells that lie close to each other in the Z direction.
 
 | Value | Effect |
 |-------|--------|
