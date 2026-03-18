@@ -508,44 +508,13 @@ def split_label(
     top_n    = np.argsort(values)[-n_splits:]
     seeds    = coords[top_n]   # shape (n_splits, 3) in cropped coords
 
-    # ── 5. Seed assignment — GPU nearest-seed, CPU watershed fallback ──────
-    split_crop = None
-
-    if _BACKEND == "cuda" and _CP is not None:
-        try:
-            mask_crop_gpu   = _CP.asarray(mask_crop)
-            mask_coords_gpu = _CP.argwhere(mask_crop_gpu)          # (M, 3) int64
-            mc_f            = mask_coords_gpu.astype(_CP.float32)  # (M, 3) float32
-
-            min_dists   = _CP.full(mc_f.shape[0], _CP.inf, dtype=_CP.float32)
-            assignments = _CP.ones(mc_f.shape[0], dtype=_CP.int32)
-
-            for i, seed in enumerate(seeds, start=1):
-                seed_gpu = _CP.asarray(seed, dtype=_CP.float32)
-                diff     = mc_f - seed_gpu[None, :]          # (M, 3)
-                sq_d     = (diff ** 2).sum(axis=1)           # (M,)
-                better   = sq_d < min_dists
-                min_dists   = _CP.where(better, sq_d, min_dists)
-                assignments = _CP.where(better, _CP.int32(i), assignments)
-
-            split_gpu = _CP.zeros(mask_crop.shape, dtype=_CP.int32)
-            split_gpu[
-                mask_coords_gpu[:, 0],
-                mask_coords_gpu[:, 1],
-                mask_coords_gpu[:, 2],
-            ] = assignments
-            split_crop = split_gpu.get()
-            print(f"   Split: seed assignment on GPU")
-        except Exception as exc:
-            print(f"   Split: GPU assignment failed ({exc}), using CPU watershed")
-            split_crop = None
-
-    if split_crop is None:
-        from skimage.segmentation import watershed
-        markers = np.zeros(mask_crop.shape, dtype=np.int32)
-        for i, c in enumerate(seeds, start=1):
-            markers[tuple(c)] = i
-        split_crop = watershed(-dist_smooth, markers, mask=mask_crop)
+    # ── 5. Watershed on negative distance map (finds narrowest boundary) ───
+    #    Runs on the cropped region only — fast even on CPU.
+    from skimage.segmentation import watershed
+    markers = np.zeros(mask_crop.shape, dtype=np.int32)
+    for i, c in enumerate(seeds, start=1):
+        markers[tuple(c)] = i
+    split_crop = watershed(-dist_smooth, markers, mask=mask_crop)
 
     # ── 6. Write result back into full-volume label array ─────────────────
     split_full = np.zeros(mask.shape, dtype=np.int32)
