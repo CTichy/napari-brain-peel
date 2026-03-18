@@ -309,10 +309,6 @@ class SkinRemoverWidget(QWidget):
 
         t2.addWidget(_sep())
 
-        self._save_labels_cb = QCheckBox("Save labels.tif")
-        self._save_labels_cb.setChecked(True)
-        t2.addWidget(self._save_labels_cb)
-
         self._labels_btn = QPushButton("Create Labels")
         self._labels_btn.setStyleSheet("QPushButton { font-weight: bold; padding: 6px; }")
         t2.addWidget(self._labels_btn)
@@ -343,6 +339,16 @@ class SkinRemoverWidget(QWidget):
         self._resort_status_lbl = QLabel("")
         self._resort_status_lbl.setWordWrap(True)
         t2.addWidget(self._resort_status_lbl)
+
+        t2.addWidget(_sep())
+
+        self._save_labels_btn = QPushButton("Save Labels")
+        self._save_labels_btn.setStyleSheet("QPushButton { padding: 5px; }")
+        t2.addWidget(self._save_labels_btn)
+
+        self._save_labels_status_lbl = QLabel("")
+        self._save_labels_status_lbl.setWordWrap(True)
+        t2.addWidget(self._save_labels_status_lbl)
 
         t2.addStretch()
         tab2.setLayout(t2)
@@ -386,6 +392,7 @@ class SkinRemoverWidget(QWidget):
         )
         self._labels_btn.clicked.connect(self._on_create_labels)
         self._resort_btn.clicked.connect(self._on_resort_labels)
+        self._save_labels_btn.clicked.connect(self._on_save_labels)
         self._viewer.layers.events.inserted.connect(self._refresh_layer_info)
         self._viewer.layers.events.removed.connect(self._refresh_layer_info)
         self._viewer.layers.selection.events.changed.connect(self._refresh_layer_info)
@@ -739,6 +746,25 @@ class SkinRemoverWidget(QWidget):
         timer.timeout.connect(_poll)
         timer.start(200)
 
+    def _on_save_labels(self):
+        lyr = self._active_labels_layer()
+        if lyr is None:
+            self._save_labels_status_lbl.setText("No Labels layer selected.")
+            return
+        file_path = self._state.get("last_file_path")
+        default   = str((file_path.parent if file_path else Path(".")) / f"{lyr.name}.tif")
+        out_str, _ = QFileDialog.getSaveFileName(
+            self, "Save Labels", default, "TIFF (*.tif *.tiff)"
+        )
+        if not out_str:
+            return
+        try:
+            tifffile.imwrite(out_str, np.asarray(lyr.data).astype(np.int32), compression="zlib")
+            self._save_labels_status_lbl.setText(f"Saved: {Path(out_str).name}")
+            print(f"Labels saved: {out_str}")
+        except Exception as exc:
+            self._save_labels_status_lbl.setText(f"ERROR: {exc}")
+
     def _on_create_labels(self):
         # Read active layer
         target = self._active_layer()
@@ -806,13 +832,6 @@ class SkinRemoverWidget(QWidget):
                 self._viewer.layers.remove(lname)
 
             self._viewer.add_labels(labels, name=lname, scale=scale)
-
-            if self._save_labels_cb.isChecked():
-                file_path = self._state.get("last_file_path")
-                out_dir   = file_path.parent if file_path else Path(".")
-                out       = out_dir / f"{stem}_labels.tif"
-                tifffile.imwrite(str(out), labels.astype(np.int32), compression="zlib")
-                print(f"Saved: {out}")
 
             self._labels_status_lbl.setText(f"Done — {n_labels} labels.")
             self._labels_btn.setEnabled(True)
