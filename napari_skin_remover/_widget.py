@@ -15,14 +15,14 @@ import napari
 from qtpy.QtWidgets import (
     QPushButton, QLabel, QWidget, QVBoxLayout, QHBoxLayout,
     QSlider, QCheckBox, QFileDialog, QSizePolicy, QButtonGroup, QRadioButton,
-    QTabWidget, QComboBox,
+    QTabWidget, QComboBox, QSpinBox,
 )
 from qtpy.QtCore import Qt, QTimer
 
 from ._io import load_file
 from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
 from ._background import remove_outside_brain, remove_global, fill_outside_brain_random
-from ._labeling import create_labels, resort_labels
+from ._labeling import create_labels, resort_labels, split_label
 
 _CONFIG_PATH = Path.home() / ".config" / "napari-skin-remover" / "config.json"
 
@@ -342,6 +342,52 @@ class SkinRemoverWidget(QWidget):
 
         t2.addWidget(_sep())
 
+        split_lbl_row = QHBoxLayout()
+        split_lbl_row.addWidget(QLabel("Target label:"))
+        self._split_label_spin = QSpinBox()
+        self._split_label_spin.setMinimum(1)
+        self._split_label_spin.setMaximum(99999)
+        self._split_label_spin.setValue(1)
+        split_lbl_row.addWidget(self._split_label_spin)
+        self._split_use_sel_btn = QPushButton("Use selected")
+        self._split_use_sel_btn.setFixedWidth(90)
+        split_lbl_row.addWidget(self._split_use_sel_btn)
+        t2.addLayout(split_lbl_row)
+
+        split_sigma_row = QHBoxLayout()
+        split_sigma_row.addWidget(QLabel("Smooth σ:"))
+        self._split_sigma_slider = QSlider(Qt.Horizontal)
+        self._split_sigma_slider.setMinimum(0)
+        self._split_sigma_slider.setMaximum(30)
+        self._split_sigma_slider.setValue(10)
+        self._split_sigma_val = QLabel("1.0")
+        self._split_sigma_val.setFixedWidth(28)
+        split_sigma_row.addWidget(self._split_sigma_slider)
+        split_sigma_row.addWidget(self._split_sigma_val)
+        t2.addLayout(split_sigma_row)
+
+        split_dist_row = QHBoxLayout()
+        split_dist_row.addWidget(QLabel("Min distance:"))
+        self._split_dist_slider = QSlider(Qt.Horizontal)
+        self._split_dist_slider.setMinimum(1)
+        self._split_dist_slider.setMaximum(30)
+        self._split_dist_slider.setValue(5)
+        self._split_dist_val = QLabel("5")
+        self._split_dist_val.setFixedWidth(28)
+        split_dist_row.addWidget(self._split_dist_slider)
+        split_dist_row.addWidget(self._split_dist_val)
+        t2.addLayout(split_dist_row)
+
+        self._split_btn = QPushButton("Split Label")
+        self._split_btn.setStyleSheet("QPushButton { padding: 5px; }")
+        t2.addWidget(self._split_btn)
+
+        self._split_status_lbl = QLabel("")
+        self._split_status_lbl.setWordWrap(True)
+        t2.addWidget(self._split_status_lbl)
+
+        t2.addWidget(_sep())
+
         self._save_labels_btn = QPushButton("Save Labels")
         self._save_labels_btn.setStyleSheet("QPushButton { padding: 5px; }")
         t2.addWidget(self._save_labels_btn)
@@ -392,6 +438,14 @@ class SkinRemoverWidget(QWidget):
         )
         self._labels_btn.clicked.connect(self._on_create_labels)
         self._resort_btn.clicked.connect(self._on_resort_labels)
+        self._split_sigma_slider.valueChanged.connect(
+            lambda v: self._split_sigma_val.setText(f"{v/10:.1f}")
+        )
+        self._split_dist_slider.valueChanged.connect(
+            lambda v: self._split_dist_val.setText(str(v))
+        )
+        self._split_use_sel_btn.clicked.connect(self._on_use_selected_label)
+        self._split_btn.clicked.connect(self._on_split_label)
         self._save_labels_btn.clicked.connect(self._on_save_labels)
         self._viewer.layers.events.inserted.connect(self._refresh_layer_info)
         self._viewer.layers.events.removed.connect(self._refresh_layer_info)
@@ -742,6 +796,72 @@ class SkinRemoverWidget(QWidget):
                 f"Done — {n} labels, sorted by {sort_label}{rev_str}."
             )
             self._resort_btn.setEnabled(True)
+
+        timer.timeout.connect(_poll)
+        timer.start(200)
+
+    def _on_use_selected_label(self):
+        """Copy the currently selected label from the active Labels layer."""
+        lyr = self._active_labels_layer()
+        if lyr is None:
+            self._split_status_lbl.setText("No Labels layer selected.")
+            return
+        sel = int(lyr.selected_label)
+        if sel == 0:
+            self._split_status_lbl.setText("Selected label is 0 (background).")
+            return
+        self._split_label_spin.setValue(sel)
+        self._split_status_lbl.setText(f"Target set to label {sel}.")
+
+    def _on_split_label(self):
+        lyr = self._active_labels_layer()
+        if lyr is None:
+            self._split_status_lbl.setText("No Labels layer selected.")
+            return
+
+        target_label = self._split_label_spin.value()
+        sigma        = self._split_sigma_slider.value() / 10.0
+        min_dist     = self._split_dist_slider.value()
+
+        self._split_btn.setEnabled(False)
+        self._split_status_lbl.setText("Splitting…")
+
+        labels = np.asarray(lyr.data)
+        result = {}
+
+        def _worker():
+            try:
+                result["labels"], result["new_id"] = split_label(
+                    labels,
+                    target_label=target_label,
+                    sigma=sigma,
+                    min_distance=min_dist,
+                )
+            except Exception as exc:
+                traceback.print_exc()
+                result["error"] = str(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        timer = QTimer(self)
+
+        def _poll():
+            if thread.is_alive():
+                return
+            timer.stop()
+            if "error" in result:
+                self._split_status_lbl.setText(f"ERROR: {result['error']}")
+                self._split_btn.setEnabled(True)
+                return
+            lyr.data = result["labels"]
+            new_id   = result["new_id"]
+            n_total  = int(result["labels"].max())
+            self._split_status_lbl.setText(
+                f"Done — label {target_label} split into {target_label} & {new_id}. "
+                f"Total labels: {n_total}."
+            )
+            self._split_btn.setEnabled(True)
 
         timer.timeout.connect(_poll)
         timer.start(200)

@@ -414,6 +414,94 @@ def resort_labels(
     return lut[labels].astype(np.int32)
 
 
+def split_label(
+    labels: np.ndarray,
+    target_label: int,
+    sigma: float = 1.0,
+    min_distance: int = 5,
+) -> "tuple[np.ndarray, int]":
+    """
+    Split one label into two using watershed on the distance transform.
+
+    The boundary is placed where the object is narrowest — the saddle point
+    of the distance map between the two local maxima.
+
+    Parameters
+    ----------
+    labels       : (Z, Y, X) int32 ndarray
+    target_label : label value to split
+    sigma        : Gaussian smoothing of distance map (higher = broader peaks)
+    min_distance : minimum voxel distance between the two seed peaks
+
+    Returns
+    -------
+    (new_labels, new_id)
+        new_labels — same shape as labels with the blob split into two parts
+        new_id     — label value assigned to the second part
+                     (target_label is kept for the first part)
+
+    Raises
+    ------
+    ValueError  if the label is not found, or if only one peak is detected
+                (object is too round / not two-lobed after smoothing)
+    """
+    from scipy.ndimage import distance_transform_edt, gaussian_filter
+    from skimage.feature import peak_local_max
+    from skimage.segmentation import watershed
+
+    mask = labels == target_label
+    if not np.any(mask):
+        raise ValueError(f"Label {target_label} not found")
+
+    # 1. Distance transform
+    dist = distance_transform_edt(mask).astype(np.float32)
+
+    # 2. Smooth (critical in 3D to suppress local noise peaks)
+    if sigma > 0:
+        dist = gaussian_filter(dist, sigma=float(sigma))
+
+    # 3. Find peaks — restricted to the mask
+    coords = peak_local_max(
+        dist,
+        labels=mask,
+        min_distance=int(min_distance),
+        exclude_border=False,
+    )
+
+    if len(coords) < 2:
+        raise ValueError(
+            f"Only {len(coords)} peak found — try reducing Min distance "
+            f"or reducing Smooth σ to reveal more structure"
+        )
+
+    # 4. Take the 2 strongest peaks
+    values  = dist[tuple(coords.T)]
+    top2    = np.argsort(values)[-2:]
+    coords2 = coords[top2]
+
+    # 5. Seed markers
+    markers = np.zeros_like(labels, dtype=np.int32)
+    for i, c in enumerate(coords2, start=1):
+        markers[tuple(c)] = i
+
+    # 6. Watershed on negative distance (grows from each peak outward)
+    split = watershed(-dist, markers, mask=mask)
+
+    # 7. Write result back — part 1 keeps target_label, part 2 gets a new id
+    new_id = int(labels.max()) + 1
+    out    = labels.copy()
+    out[split == 1] = target_label
+    out[split == 2] = new_id
+
+    n1 = int((split == 1).sum())
+    n2 = int((split == 2).sum())
+    print(f"   Split label {target_label}: "
+          f"part A = {n1:,} vox (id {target_label})  "
+          f"part B = {n2:,} vox (id {new_id})")
+
+    return out.astype(np.int32), new_id
+
+
 def create_labels(
     volume: np.ndarray,
     sigma_xy: float = 1.0,
