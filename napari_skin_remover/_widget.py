@@ -152,7 +152,7 @@ class SkinRemoverWidget(QWidget):
         t1.addWidget(_sep())
 
         thresh_row = QHBoxLayout()
-        thresh_row.addWidget(QLabel("Threshold:"))
+        thresh_row.addWidget(QLabel("MONAI Threshold:"))
         self._thresh_slider = QSlider(Qt.Horizontal)
         self._thresh_slider.setMinimum(1)
         self._thresh_slider.setMaximum(99)
@@ -200,21 +200,21 @@ class SkinRemoverWidget(QWidget):
         t1.addWidget(self._bg_mode3_rb)
 
         tol_row = QHBoxLayout()
-        self._tol_lbl = QLabel("  Tolerance (%):")
+        self._tol_lbl = QLabel("  BG Threshold:")
         tol_row.addWidget(self._tol_lbl)
         self._tol_slider = QSlider(Qt.Horizontal)
-        self._tol_slider.setMinimum(-100)
-        self._tol_slider.setMaximum(100)
+        self._tol_slider.setMinimum(0)
+        self._tol_slider.setMaximum(200)
         self._tol_slider.setValue(50)
-        self._tol_val = QLabel("+0.50")
-        self._tol_val.setFixedWidth(42)
+        self._tol_val = QLabel("0.50")
+        self._tol_val.setFixedWidth(36)
         tol_row.addWidget(self._tol_slider)
         tol_row.addWidget(self._tol_val)
         t1.addLayout(tol_row)
 
         bg_note = QLabel(
             "  Probe: inside-brain mode (post-inference)\n"
-            "  Mode 1 & 2 use tolerance  |  Mode 3: no tolerance"
+            "  Mode 1 & 2 use BG Threshold  |  Mode 3: no threshold"
         )
         bg_note.setStyleSheet("color: #aaa; font-size: 10px;")
         t1.addWidget(bg_note)
@@ -374,7 +374,7 @@ class SkinRemoverWidget(QWidget):
             lambda v: self._erosion_val.setText(str(v))
         )
         self._tol_slider.valueChanged.connect(
-            lambda v: self._tol_val.setText(f"{v/100:+.2f}")
+            lambda v: self._tol_val.setText(f"{v/100:.2f}")
         )
         self._bg_group.buttonClicked.connect(self._on_bg_mode_changed)
         self._run_btn.clicked.connect(self._on_run)
@@ -581,8 +581,8 @@ class SkinRemoverWidget(QWidget):
         print(f"Erosion  : {erosion_voxels} voxel(s)")
         bg_mode_str = {
             0: "Off",
-            1: f"Remove outside-brain (tol={bg_tolerance_pct:+.2f}%)",
-            2: f"Remove globally (tol={bg_tolerance_pct:+.2f}%)",
+            1: f"Remove outside-brain (BG threshold={bg_tolerance_pct:.2f})",
+            2: f"Remove globally (BG threshold={bg_tolerance_pct:.2f})",
             3: "Fill sub-background with random noise",
         }[bg_mode]
         print(f"BG mode  : {bg_mode_str}")
