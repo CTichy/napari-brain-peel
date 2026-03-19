@@ -66,6 +66,22 @@ _BACKEND, _CP, _CPND = _detect_backend()
 _N_THREADS = max(1, (os.cpu_count() or 4) // 2)
 
 
+def _free_gpu_cache() -> None:
+    """Free CuPy and PyTorch GPU memory pools to prevent OOM."""
+    if _CP is not None:
+        try:
+            _CP.get_default_memory_pool().free_all_blocks()
+            _CP.get_default_pinned_memory_pool().free_all_blocks()
+        except Exception:
+            pass
+    try:
+        import torch
+        if torch.cuda.is_available():
+            torch.cuda.empty_cache()
+    except Exception:
+        pass
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # Union-Find  (CPU, always — pairs array is tiny after GPU extraction)
 # ─────────────────────────────────────────────────────────────────────────────
@@ -213,6 +229,8 @@ def _create_labels_cuda(
     n_final = int(output.max())
     print(f"   3D blobs removed (< {min_volume} vox): {removed}")
     print(f"   Final 3D labels: {n_final}  (label 1 = largest)")
+    del output_gpu, counts, keep_lut
+    _free_gpu_cache()
     return output.astype(np.int32)
 
 
@@ -482,6 +500,7 @@ def split_label(
             dist_gpu  = _CPND.gaussian_filter(dist_gpu, sigma=float(sigma))
             dist_smooth = dist_gpu.get()
             del dist_gpu
+            _free_gpu_cache()
             print(f"   Split: Gaussian smooth on GPU")
         except Exception as exc:
             print(f"   Split: GPU smooth failed ({exc}), using CPU")
@@ -603,6 +622,7 @@ def create_labels(
         except Exception as exc:
             # e.g. out-of-memory — fall back gracefully
             print(f"   CUDA error ({exc}), falling back to CPU.")
+            _free_gpu_cache()
 
     return _create_labels_threaded(
         volume, sigma_xy, sigma_z, min_overlap_pct, min_volume

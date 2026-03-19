@@ -91,6 +91,10 @@ def run_inference(volume, model_path, threshold, device, erosion_voxels=0):
         )
         pred_prob = torch.sigmoid(pred_logits).cpu().numpy()[0, 0]
 
+    del model, volume_t, pred_logits
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+
     raw_mask = (pred_prob > threshold).astype(bool)
 
     # ------------------------------------------------------------------ #
