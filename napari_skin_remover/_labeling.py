@@ -473,7 +473,6 @@ def split_label(
     ValueError  if the label is not found, or fewer peaks than n_splits found
     """
     from scipy.ndimage import distance_transform_edt
-    from skimage.feature import peak_local_max
 
     mask = labels == target_label
     if not np.any(mask):
@@ -508,24 +507,72 @@ def split_label(
     else:
         dist_smooth = cpu_gaussian(dist, sigma=float(sigma)) if sigma > 0 else dist
 
-    # ── 4. Peak detection (CPU, small data after crop) ─────────────────────
-    coords = peak_local_max(
-        dist_smooth,
-        labels=mask_crop,
-        min_distance=int(min_distance),
-        exclude_border=False,
-    )
+    # ── 4. Seed detection via h-maxima (topological prominence) ────────────
+    #
+    #    peak_local_max uses Euclidean distance — it fails when two big chunks
+    #    are spatially close (thin neck) because their centres may be within
+    #    min_distance of each other.
+    #
+    #    h_maxima finds peaks that stand at least h ABOVE their lowest saddle
+    #    to any higher peak.  The thin neck IS that saddle, so the two chunk
+    #    centres are always separated regardless of their Euclidean distance.
+    #
+    #    We auto-reduce h (starting at 50% of max EDT) until >= n_splits
+    #    topologically distinct peaks are found.  Each peak is then placed at
+    #    the EDT maximum inside its h-maxima connected region.
+    #
+    #    min_distance is used as a final Euclidean guard: if two chosen seeds
+    #    are closer than min_distance voxels, the weaker one is dropped.
+    from skimage.morphology import h_maxima
+    from scipy.ndimage import label as _nd_label
 
-    if len(coords) < n_splits:
+    dist_in_mask = dist_smooth * mask_crop.astype(np.float32)
+    max_dist = float(dist_in_mask.max())
+    if max_dist == 0:
+        raise ValueError(f"Label {target_label}: distance transform is zero — blob too flat?")
+
+    # Iteratively reduce h until >= n_splits prominent peaks found
+    h_val   = max_dist * 0.50
+    h_floor = max_dist * 0.005          # never go below 0.5 % of max EDT
+    labeled_hmax = None
+    n_found = 0
+    while h_val >= h_floor:
+        hmax = h_maxima(dist_in_mask, h=float(h_val))
+        labeled_hmax, n_found = _nd_label(hmax)
+        if n_found >= n_splits:
+            break
+        h_val *= 0.75
+
+    if n_found < n_splits:
         raise ValueError(
-            f"Only {len(coords)} peak(s) found, need {n_splits} — "
-            f"try reducing Min distance or Smooth σ"
+            f"Only {n_found} distinct sub-volume(s) found — "
+            f"try reducing Smooth σ"
         )
 
-    # Top n_splits peaks by distance value (strongest = most central)
-    values   = dist_smooth[tuple(coords.T)]
-    top_n    = np.argsort(values)[-n_splits:]
-    seeds    = coords[top_n]   # shape (n_splits, 3) in cropped coords
+    # For each h-maxima region pick the voxel with the highest EDT value
+    region_peaks = []
+    for i in range(1, n_found + 1):
+        region_dist = np.where(labeled_hmax == i, dist_in_mask, 0.0)
+        coord       = np.array(np.unravel_index(region_dist.argmax(), region_dist.shape))
+        peak_val    = float(dist_in_mask[tuple(coord)])
+        region_vol  = int((labeled_hmax == i).sum())
+        region_peaks.append((peak_val, region_vol, coord))
+
+    # Sort by EDT peak value (thickest chunk centre first) then apply
+    # Euclidean min_distance guard to avoid two seeds in the same chunk
+    region_peaks.sort(key=lambda t: t[0], reverse=True)
+    seeds = []
+    for peak_val, _vol, coord in region_peaks:
+        if all(np.linalg.norm(coord - s) >= min_distance for s in seeds):
+            seeds.append(coord)
+        if len(seeds) == n_splits:
+            break
+
+    if len(seeds) < n_splits:
+        raise ValueError(
+            f"Only {len(seeds)} well-separated peak(s) after min-distance "
+            f"guard — try reducing Min distance"
+        )
 
     # ── 5. Watershed on negative distance map (finds narrowest boundary) ───
     #    Runs on the cropped region only — fast even on CPU.
