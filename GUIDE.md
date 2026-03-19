@@ -10,25 +10,26 @@
 2. [Installation](#2-installation)
 3. [Getting the model file](#3-getting-the-model-file)
 4. [Opening the plugin in napari](#4-opening-the-plugin-in-napari)
-5. [Tab 1 — Skin Remover: every option explained](#5-tab-1--skin-remover-every-option-explained)
-6. [Tab 2 — Create Labels: every option explained](#6-tab-2--create-labels-every-option-explained)
-7. [Full workflow: from raw stack to microglia labels](#7-full-workflow-from-raw-stack-to-microglia-labels)
-8. [Reinstalling after an update](#8-reinstalling-after-an-update)
-9. [Troubleshooting](#9-troubleshooting)
+5. [Tab 1 — Skin Remover](#5-tab-1--skin-remover)
+6. [Tab 2 — Create Labels](#6-tab-2--create-labels)
+7. [Output files and folder structure](#7-output-files-and-folder-structure)
+8. [Statistics CSV — all columns explained](#8-statistics-csv--all-columns-explained)
+9. [Setting up description backends](#9-setting-up-description-backends)
+10. [Full workflow: from raw stack to labelled cells](#10-full-workflow-from-raw-stack-to-labelled-cells)
+11. [Reinstalling after an update](#11-reinstalling-after-an-update)
+12. [Troubleshooting](#12-troubleshooting)
 
 ---
 
 ## 1. What this plugin does
 
-You have a confocal microscopy stack of a zebrafish brain. The image contains:
-- The brain you care about
-- Skin, tissue, and background surrounding the brain
+You have a confocal microscopy stack of a zebrafish brain. The image contains the brain you care about plus skin, tissue, and background surrounding it.
 
-This plugin does two things:
+This plugin does two things, in order:
 
-**Step A — Skin Removal:** Uses a trained AI model (MONAI U-Net) to automatically detect and remove everything outside the brain, leaving you with a clean `brain_only` image.
+**Step A — Skin Removal (Tab 1):** Uses a trained AI model (MONAI 3D U-Net) to automatically detect and remove everything outside the brain, producing a clean `brain_only` image where only the cells of interest remain visible.
 
-**Step B — Create Labels:** From the cleaned image, automatically finds and labels each individual microglia (or other stained cell type) as a separate numbered region — ready for analysis.
+**Step B — Label and Analyse (Tab 2):** From the cleaned image, automatically finds and labels each individual cell (microglia or other stained type) as a separately numbered 3D region, lets you sort, split, and edit labels, then computes a comprehensive set of shape statistics for each cell and exports them to a CSV file.
 
 ---
 
@@ -40,30 +41,27 @@ You need Python with napari already installed. Open a terminal and run:
 pip install git+https://github.com/CTichy/napari-skin-remover.git
 ```
 
-That's it. All dependencies (PyTorch, MONAI, etc.) are installed automatically.
+All dependencies (PyTorch, MONAI, scikit-image, etc.) are installed automatically.
 
-> **Mac users with Apple Silicon (M1/M2/M3):** The plugin automatically uses your GPU via Metal (MPS). No extra steps needed — it will be much faster than CPU.
+> **Mac with Apple Silicon (M1/M2/M3):** The plugin automatically uses your GPU via Metal (MPS). No extra steps needed.
 
-> **Windows/Linux with NVIDIA GPU:** Also automatic — CUDA is detected and used.
+> **Windows / Linux with NVIDIA GPU:** CUDA is detected and used automatically. For the fastest statistics (GPU batch regionprops), `cupy-cuda12x` and `cucim` must be installed separately — see Section 12 for details.
 
-> **No GPU:** Works on CPU too, just slower (~30–60 minutes per stack).
+> **No GPU:** Works on CPU too, just slower (~30–60 minutes per stack for inference).
 
 ---
 
 ## 3. Getting the model file
 
-The AI model is a large file (~220 MB) that is **not included in the plugin**. You need to download it separately.
+The AI model (~220 MB) is **not included in the plugin** and must be downloaded separately.
 
-**Download the model here:**
-👉 [best_model_fullstack.pth](https://cloud.technikum-wien.at/s/kYQ4qq3Jsn4xEyY)
+**Download:**
 
 ```
 https://cloud.technikum-wien.at/s/kYQ4qq3Jsn4xEyY
 ```
 
-**Where to save it:**
-
-Create a folder called `models` anywhere on your computer that is easy to find. For example:
+Save the file `best_model_fullstack.pth` anywhere on your computer that is easy to find, for example:
 
 ```
 Documents/
@@ -71,147 +69,176 @@ Documents/
     └── best_model_fullstack.pth
 ```
 
-You will point the plugin to this file the first time you use it. **The plugin remembers the path** — you only need to do this once.
+You will point the plugin to this file the first time you use it. **The plugin remembers the path** — you only need to do this once per installation.
 
 ---
 
 ## 4. Opening the plugin in napari
 
-1. Open a terminal and type `napari` to launch it
-2. In the napari menu bar, click **Plugins**
-3. Click **MONAI Skin-Remover**
-4. A panel appears on the right side of napari with two tabs: **Skin Remover** and **Create Labels**
+1. Open a terminal and type `napari` to launch it.
+2. In the napari menu bar, click **Plugins**.
+3. Click **MONAI Skin-Remover**.
+4. A panel appears on the right side with two tabs: **Skin Remover** and **Create Labels**.
 
 ---
 
-## 5. Tab 1 — Skin Remover: every option explained
+## 5. Tab 1 — Skin Remover
 
 ### Open TIF / IMS file
 
-Click this button to open your microscopy file (`.tif`, `.tiff`, or `.ims` format).
+Click this button to open your confocal stack (`.tif`, `.tiff`, or `.ims` format).
 
-- All channels in the file are loaded as **separate layers** in napari, each with a different color:
+- All channels in the file are loaded as separate napari layers, each coloured differently:
   - Channel 0 → gray
   - Channel 1 → green
   - Channel 2 → magenta
   - Channel 3 → cyan
-- Voxel size (scale) is read automatically from the file metadata
+- Voxel size (physical scale in µm) is read automatically from the file metadata and applied to all layers.
+- The folder and filename are remembered for automatic output file naming (see Section 7).
 
-> **Important:** After loading, **click on the channel you want to process** in the Layers panel on the left. This tells the plugin which channel to run the AI on. For microglia, this is usually the green channel (ch1).
+> **Important:** After loading, **click on the channel you want to process** in the Layers panel on the left. The plugin always runs on whichever image layer is currently selected (highlighted). For microglia, this is usually the green channel (ch1).
 
 ---
 
 ### Model (.pth) — Browse button `[...]`
 
-The plugin shows the path to the AI model. If it says "— no model selected —":
+Shows the path to the AI model file. If it says "— no model selected —":
 
-1. Click the `[...]` button
-2. Navigate to where you saved the model file
-3. Select `best_model_fullstack.pth`
-4. Click Open
+1. Click the `[...]` button.
+2. Navigate to where you saved the model file.
+3. Select `best_model_fullstack.pth` and click Open.
 
-The path is saved automatically. Next time you open the plugin, it will already be there.
+The path is saved automatically to `~/.config/napari-skin-remover/config.json`. Next time you open the plugin, the model is already loaded.
 
 ---
 
-### Threshold slider
+### Input info display
+
+Below the model path, the plugin shows:
+
+- The name and shape of the currently selected layer (e.g. `"NT54_ch1"  (300, 1024, 1024)  uint16`)
+- The voxel dimensions: `Z=1.0000  Y=0.1740  X=0.1740 µm`
+- The anisotropy ratio and the source of the scale information (from file metadata, from the layer scale, or default 1,1,1)
+
+This is read-only — it updates automatically when you click a different layer.
+
+---
+
+### MONAI Threshold
 
 **Range:** 0.01 to 0.99 — **Default: 0.30**
 
-The AI model outputs a probability map (0 = definitely not brain, 1 = definitely brain). This slider sets the cutoff:
+The AI model outputs a probability map (0 = definitely not brain, 1 = definitely brain). This slider sets the cutoff: voxels above the threshold are classified as brain.
 
-- **Lower values (e.g. 0.20):** More generous — includes uncertain areas, might keep some skin
-- **Higher values (e.g. 0.50):** More strict — might cut into brain edges
-- **Recommended:** Start at 0.30, adjust only if results look wrong
+| Value | Effect |
+|-------|--------|
+| 0.20 | More generous — includes uncertain areas; may keep some skin |
+| **0.30** | **Recommended — good for zebrafish at 4 dpf** |
+| 0.50 | Stricter — may cut into brain edges |
 
-> Most of the time, **0.30 works well** because the post-processing (largest component + fill holes) cleans up the result anyway.
+> Post-processing (largest connected component + hole filling) cleans up most artefacts regardless of threshold. Keep it at 0.30 unless results look obviously wrong.
 
 ---
 
-### Erosion slider
+### Erosion (vox)
 
 **Range:** 0 to 15 voxels — **Default: 0**
 
-After the brain mask is computed, erosion "shrinks" the mask inward by the specified number of voxels. This strips a rim of skin from the edge of `brain_only`.
+After the brain mask is computed, this many voxels are stripped inward from the mask edge before applying it to `brain_only`. This removes a thin skin rim.
 
-- **0:** No erosion — use the raw mask as-is
-- **2–3:** Typical for zebrafish — removes a thin skin rim
-  - 1 voxel in Z ≈ 1 µm
-  - 1 voxel in XY ≈ 0.17 µm
+- **0:** No erosion — use the mask exactly as computed.
+- **2–3:** Typical for zebrafish — removes a ~0.3–0.5 µm rim in XY or 2–3 µm in Z.
 
-> **Note:** The `brain_mask.tif` saved to disk is **always the un-eroded mask**. Erosion only affects `brain_only.tif`.
+> The `brain_mask.tif` saved to disk is **always the un-eroded mask**. Erosion only affects `brain_only.tif`.
 
 ---
 
-### Background (brain mode) — three options
+### Background (brain mode)
 
-This section removes or replaces the background signal inside the brain area. The background level is estimated automatically using the **mode** (most frequent intensity) of pixels inside the brain, computed after inference.
+Four radio buttons controlling how background signal is handled after inference.
 
-> **What is "mode"?** The mode is the intensity value that appears most often. Since background pixels are the majority of pixels inside the brain, the most common value is the background level.
+The background level is estimated automatically using the **mode** (most common intensity) of pixels inside the brain, computed from the result of inference. The mode represents the baseline scanner noise because background pixels vastly outnumber bright cell pixels.
 
-#### Option: Off
-No background processing. `brain_only` is simply the original volume multiplied by the brain mask — everything outside the brain is zero, everything inside is the original signal.
+#### Off
 
-#### Option 1 — Remove background outside brain (inference)
-Removes background-level pixels only **outside** the brain. Useful for cleaning up the outer region while leaving the brain completely untouched.
+No background processing. `brain_only` = original volume × brain mask. Everything outside the brain is zeroed; everything inside is the original signal unchanged.
 
-- Uses the same threshold logic as option 2
-- Brain interior is fully protected — nothing inside changes
+#### 1 — Remove background outside brain (inference)
 
-#### Option 2 — Remove background globally (full stack) ⭐ **Recommended for labels**
-Removes all pixels in the **entire stack** (including inside the brain) whose intensity is at or below the background threshold.
+Removes background-level pixels only in the region **outside** the brain boundary. The brain interior is fully protected — nothing inside changes. Useful for cleaning up outer tissue while leaving the brain completely untouched.
 
-**Result:** Only the actual signal (bright microglia, stained cells) survives. Everything at background level becomes zero, leaving clean isolated blobs with empty space between them.
+- Requires BG Threshold (see below).
 
-**This is the option to use before creating labels.**
+#### 2 — Remove background globally (full stack) ⭐ Recommended before labelling
 
-#### Option 3 — Fill removed with random background
-After skin removal, fills the empty region outside the brain with **random noise** sampled from the background pixel distribution. The result looks like the original stack but with the skin replaced by natural scanner noise — no hard black boundary.
+Removes all pixels across the **entire stack** (including inside the brain) whose intensity falls at or below the background threshold.
 
-- Uses Gaussian-filtered sampling (±2σ outlier removal) so the noise matches the real scanner texture
-- No tolerance needed for this mode
+**Result:** Only the actual signal (bright microglia, stained cells) survives. Background becomes zero everywhere, leaving clean isolated blobs with empty space between them — exactly what the Create Labels algorithm needs.
+
+**Use this option before creating labels.**
+
+The saved filename gets the suffix `_NoBG` (e.g. `NT54_ch1_brain_only_NoBG.tif`).
+
+#### 3 — Fill removed with random background
+
+After skin removal, the region outside the brain is filled with **random noise** sampled from the actual background pixel distribution. The result looks like the original stack but with skin replaced by natural scanner noise — no hard black boundary at the brain edge.
+
+- Uses Gaussian-filtered corner pixels as the noise pool (±2σ outlier removal) so the noise matches the real scanner texture.
+- BG Threshold is not used in this mode.
+
+The saved filename gets the suffix `_RndFill` (e.g. `NT54_ch1_brain_only_RndFill.tif`).
 
 ---
 
-### Tolerance slider
+### BG Threshold
 
-**Range:** -1.00% to +1.00% — **Default: +0.50%**
+**Range:** 0.00 to 2.00 — **Default: 0.50**
 
-*(Only active for options 1 and 2)*
+*(Only active for background modes 1 and 2)*
 
-Fine-tunes the background threshold:
+Fine-tunes the background removal threshold:
 
 ```
-threshold = background_mode + tolerance
-pixels ≤ threshold → removed (background)
-pixels > threshold → kept (signal)
+threshold = background_mode_value + BG_Threshold_offset
+pixels ≤ threshold → removed (treated as background)
+pixels  > threshold → kept (treated as signal)
 ```
 
-| Tolerance | Effect |
-|-----------|--------|
-| **Negative (e.g. -0.50%)** | Threshold drops → only the very darkest pixels removed → more signal preserved |
-| **Zero (0.00%)** | Threshold = exactly the mode → remove background, keep all signal above it |
-| **Positive (e.g. +0.60%)** | Threshold rises → removes background + some dim signal → cleaner separation |
+| Value | Effect |
+|-------|--------|
+| 0.00 | Threshold = exactly the mode — removes only confirmed background |
+| **0.50** | **Default — removes background + a small margin above the mode** |
+| 0.60 | Recommended for microglia labelling — clean separation between cells |
+| 1.00+ | Aggressive — may remove dim signal from thin cell protrusions |
 
-> **For microglia labeling, +0.60% works very well** — it produces clean isolated blobs with clear gaps between cells that the label algorithm can separate properly.
+> For microglia labelling, **0.60** typically produces the cleanest isolated blobs with good gaps between cells. If microglia are losing thin protrusions, lower the value.
 
 ---
 
 ### Save checkboxes
 
-- **Save brain_only.tif** — saves the processed brain volume (checked by default)
-- **Save brain_mask.tif** — saves the binary mask as 0/255 uint8 (checked by default)
+- **Save brain\_only.tif** (checked by default) — saves the brain-only volume with background removed
+- **Save brain\_mask.tif** (checked by default) — saves the binary mask as 0/255 uint8
 
-Both files are saved in the **same folder as your input file**, with `_brain_only` and `_brain_mask` added to the filename.
+Both files are saved in the output folder (see Section 7). The `brain_only` filename includes a background-mode suffix:
+
+| Mode | Suffix | Example filename |
+|------|--------|-----------------|
+| Off | (none) | `NT54_ch1_brain_only.tif` |
+| 1 — Exterior Removed | `_ExtRm` | `NT54_ch1_brain_only_ExtRm.tif` |
+| 2 — No Background | `_NoBG` | `NT54_ch1_brain_only_NoBG.tif` |
+| 3 — Random Fill | `_RndFill` | `NT54_ch1_brain_only_RndFill.tif` |
 
 ---
 
-### Run Skin-Remover button
+### Run Skin-Remover
 
-Click to start processing. The status bar below the button shows progress. Results appear as new layers in napari:
+Click to start processing. The button is greyed out while running; the status bar shows progress.
 
-- `*_brain_mask` — the binary mask (shown in cyan, semi-transparent)
-- `*_brain_only` — the cleaned brain volume
+When complete, two new layers appear in napari:
+
+- `*_brain_mask` — binary mask in cyan, semi-transparent
+- `*_brain_only[suffix]` — the cleaned volume
 
 Processing time:
 - NVIDIA GPU: ~30 seconds
@@ -220,123 +247,472 @@ Processing time:
 
 ---
 
-## 6. Tab 2 — Create Labels: every option explained
+## 6. Tab 2 — Create Labels
 
-> **Before using this tab:** Run Tab 1 with **Option 2 — Remove background globally** first. The Create Labels function reads the resulting `brain_only` layer.
-
-Click the **brain_only** layer in the Layers panel to select it, then switch to this tab.
+> Before using this tab, run Tab 1 with **Option 2 — Remove background globally**. Then click the resulting `brain_only` layer in the Layers panel to select it.
 
 ---
 
-### Smooth σ XY slider
+### Smooth σ XY
 
 **Range:** 0.0 to 5.0 — **Default: 1.0** — **Recommended: 1.5**
 
-Controls the **smoothness of blob contours within each 2D slice** (XY plane).
+Controls the softness of blob contours **within each 2D slice** (the XY plane).
 
-- Rounds jagged edges and fills tiny pixel-level gaps within the same slice
-- **This is the knob to adjust for softer, rounder blob outlines**
-- Keep this low — high values risk merging neighbouring cells within a slice
+Gaussian smoothing is applied before thresholding each slice. This rounds jagged pixel edges and fills tiny holes within the same cross-section.
 
 | Value | Effect |
 |-------|--------|
-| 0.0 | No smoothing — raw jagged edges |
-| 1.0 | Light smoothing — fine details preserved |
-| **1.5** | **Recommended — smooth solid blobs, cells stay separated** |
-| 3.0+ | Heavy smoothing — risk of merging nearby cells within the same slice |
+| 0.0 | No smoothing — raw pixel edges |
+| **1.5** | **Recommended — solid, rounded blobs with preserved shape** |
+| 3.0+ | Heavy — risk of merging nearby cells within the same slice |
+
+> Do not confuse with Smooth σ Z. They serve completely different purposes.
 
 ---
 
-### Smooth σ Z slider
+### Smooth σ Z
 
 **Range:** 0.0 to 5.0 — **Default: 0.5** — **Recommended: 3.0**
 
-Controls **cross-slice connectivity** — how easily blobs in neighbouring Z slices are recognised as part of the same 3D cell.
+Controls **cross-slice connectivity** — how easily the algorithm links blobs in neighbouring Z slices into a single 3D object.
 
-- A cell that disappears for 1–2 slices and reappears will be correctly linked with a higher σ Z
-- **σ Z and σ XY are NOT comparable values** — they serve completely different purposes and operate at different physical scales
+A microglia that disappears for 1–2 slices (due to low signal or a thin neck) and reappears will be correctly merged into one 3D object when σ Z is high enough.
 
-> **Why is σ Z = 3.0 while σ XY = 1.5?**
-> Zebrafish confocal stacks are highly anisotropic: each Z slice is ~1 µm thick while each XY pixel is only ~0.17 µm. A σ Z of 3.0 voxels spans ~3 µm physically. A σ XY of 1.5 voxels spans only ~0.26 µm.
+> **Why σ Z = 3.0 while σ XY = 1.5?**
 >
-> Both sigmas carry a merging risk — but at different physical scales:
-> - σ XY = 1.5 risks merging cells that are ~0.26 µm apart in XY (very tight — happens easily in dense tissue)
-> - σ Z = 3.0 risks merging cells that are ~3 µm apart in Z (much less likely for microglia, which are typically 10–20 µm in diameter)
+> Zebrafish confocal stacks are highly anisotropic: each Z slice is ~1 µm thick while each XY pixel is ~0.17 µm. So σ Z = 3.0 spans ~3 µm physically, while σ XY = 1.5 spans only ~0.26 µm.
 >
-> **Conclusion:** σ Z = 3.0 is a validated safe choice for zebrafish microglia, but increasing it beyond 4–5 may start merging cells that lie close to each other in the Z direction.
+> A microglia is typically 10–20 µm in diameter. Two microglia need to be closer than ~3 µm in Z for σ Z = 3.0 to risk merging them — which is uncommon in practice. This has been validated safe for zebrafish 4dpf microglia.
 
 | Value | Effect |
 |-------|--------|
 | 0.0 | No cross-slice smoothing — each slice fully independent |
-| 0.5 | Minimal — only immediately adjacent slices connected |
-| **3.0** | **Recommended for zebrafish — bridges 1–3 slice gaps within a cell** |
+| 0.5 | Minimal — only adjacent slices with strong overlap connected |
+| **3.0** | **Recommended for zebrafish — bridges 1–3 slice gaps** |
 | 5.0+ | Very aggressive — may link cells at different Z depths |
 
 ---
 
-### Min overlap (%) slider
+### Min overlap (%)
 
 **Range:** 1 to 100 — **Default: 10%**
 
-Two blobs in adjacent slices are considered the **same 3D cell** if they overlap by at least this percentage.
+Two blobs in adjacent slices are recognised as the **same 3D cell** only if they share at least this fraction of the smaller blob's area:
 
 ```
-overlap_ratio = shared_pixels / smaller_blob_area
-if overlap_ratio ≥ min_overlap% → same object
+overlap_ratio = shared_pixel_count / area_of_smaller_blob
+if overlap_ratio ≥ min_overlap% → same object (linked)
 ```
 
-- **Lower values (e.g. 5%):** More permissive — blobs with small overlap still linked
-- **Higher values (e.g. 30%):** More strict — only heavily overlapping blobs linked
-- **Start at 10%** and adjust if cells are being split or merged incorrectly
+- **Lower (5%):** Permissive — small touching fragments are linked.
+- **Higher (30%):** Strict — only well-aligned blobs linked; isolated particles stay separate.
+- **Start at 10%** and increase if too many fragments are joined, or decrease if cells are being cut across slices.
 
 ---
 
-### Min volume (vox) slider
+### Min volume (vox)
 
 **Range:** 5000 to 10000 — **Default: 7500**
 
-After all blobs are linked into 3D objects, any object smaller than this number of voxels is **deleted** as noise/fragment.
+After all 2D blobs are linked into 3D objects, any object smaller than this voxel count is deleted as noise.
 
-- **5000 vox:** Keeps smaller objects — might include noise fragments
-- **7500 vox:** Good default for adult zebrafish microglia
-- **10000 vox:** Strict — only keeps large objects
+| Value | When to use |
+|-------|-------------|
+| 5000 | Keep smaller objects — may include noise |
+| **7500** | **Default — validated for adult zebrafish microglia** |
+| 10000 | Keep only large objects — use if many small debris remain |
 
-> Microglia in zebrafish 4dpf typically occupy ~15,000–50,000 voxels at standard resolution.
-
----
-
-### Save labels.tif checkbox
-
-When checked (default), saves the labels as an int32 TIF file named `*_labels.tif` in the same folder as your input.
-
-Each label number (1, 2, 3...) corresponds to one 3D object. The file can be opened in napari or Fiji/ImageJ for further analysis.
+> Zebrafish microglia at 4dpf typically occupy 15,000–50,000 voxels at standard resolution.
 
 ---
 
-### Create Labels button
+### Create Labels
 
-Click to run. The console output shows:
+Click to run the 3D labelling algorithm. Processing runs in a background thread — the button is disabled until complete.
+
+When done, a `*_labels` layer appears in napari with each detected cell shown in a different colour. The console prints how many labels were found.
+
+---
+
+### Sort by / Reverse order / Resort Labels
+
+After creating (or loading) labels, you can renumber them by a criterion of your choice.
+
+**Sort by** dropdown:
+
+| Option | Meaning | Default order |
+|--------|---------|---------------|
+| Size | Number of voxels | Largest = label 1 |
+| Centroid Z | Z coordinate of centre | Smallest Z = label 1 |
+| Centroid Y | Y coordinate of centre | Smallest Y = label 1 |
+| Centroid X | X coordinate of centre | Smallest X = label 1 |
+
+**Reverse order** checkbox — inverts the ordering (e.g. smallest = label 1 for Size).
+
+Click **Resort Labels** to apply. The active Labels layer is renumbered 1…N in the chosen order, in place. This is useful for consistent numbering across samples or for matching cells to a reference atlas.
+
+---
+
+### Split Label
+
+Splits a single merged label (a blob where two or more cells are stuck together) into separate parts using a 3D watershed algorithm.
+
+The watershed approach finds the **thinnest neck** connecting two large volumes and cuts there — it does not use a simple distance threshold or Euclidean splitting.
+
+#### Target label
+
+The label number of the blob you want to split. You can type it directly, or:
+
+1. In the napari viewer, hover over the blob and read the label number shown in the status bar.
+2. Click the blob to select it in the Labels layer.
+3. Click **Use selected** — the label number is filled in automatically.
+
+#### Use selected
+
+Reads the currently selected label from the active napari Labels layer and fills it into the Target label spinner. Click the blob in napari first, then click this button.
+
+#### Split into N parts
+
+**Range:** 2 to 10 — **Default: 2**
+
+How many separate pieces the blob should be divided into. The algorithm searches for the N largest sub-volumes (separated at their thinnest necks) and cuts between them.
+
+> If the blob genuinely has only one major volume (no neck), splitting may fail or produce uneven results. Increase Smooth σ or use a lower Min distance if that happens.
+
+#### Smooth σ (Split)
+
+**Range:** 0.0 to 3.0 — **Default: 1.0**
+
+Gaussian smoothing applied to the distance transform before searching for peaks. Higher values smooth out the distance map, making the algorithm more robust to surface noise but less sensitive to subtle necks.
+
+- **0.5–1.0:** Suitable for most cases.
+- **1.5–2.0:** Use if the split point jumps around — smoother distance field = more stable result.
+- **0.0:** No smoothing — very sensitive to surface texture.
+
+#### Min distance
+
+**Range:** 1 to 30 voxels — **Default: 5**
+
+Minimum voxel distance required between accepted seed peaks. If two candidate peaks are closer than this, only the stronger one is kept.
+
+- **Too high:** The two centres of a closely-packed double-blob may be rejected as "too close" → fewer than N peaks found → error.
+- **Too low:** Surface noise peaks may be accepted as separate centres → wrong split point.
+- **5 voxels** works well for microglia-sized cells.
+
+#### Split Label (button)
+
+Click to run. The original blob is replaced in-place:
+
+- The original label number is kept for the **first** part (the largest sub-volume).
+- New label numbers (`max_existing + 1`, `max_existing + 2`, …) are assigned to the remaining parts.
+
+The cut is **interface-only**: exactly the voxels at the boundary between parts are removed, creating a 1-voxel gap. The outer surface of each part is not touched — thin protrusions are preserved.
+
+If the algorithm cannot find N distinct sub-volumes, an error message is shown. Try reducing Smooth σ or Min distance.
+
+---
+
+### Save Labels
+
+Opens a file-save dialog pre-filled with the output folder (see Section 7) and the current layer name as the filename. Choose a location and filename, then click Save.
+
+Labels are saved as `int32` TIFF. Each voxel value = label number (0 = background).
+
+> **Save Labels is separate from Create Labels by design.** This lets you edit labels in napari (split, delete, merge) before saving the final result.
+
+---
+
+### Generate Statistics
+
+Computes 25 morphological measurements for every label and saves them to a CSV file.
+
+#### Description backend
+
+Selects the engine used to generate the plain-language `description` column in the CSV.
+
+| Option | Internet | Cost | Notes |
+|--------|----------|------|-------|
+| **Rule-based (offline)** | No | Free | Always available; template-based sentences |
+| **Ollama (local, free)** | No | Free | Runs a local LLM on your machine |
+| **OpenAI API (paid)** | Yes | Pay-per-token | GPT-4o-mini recommended for low cost |
+| **Claude API (paid)** | Yes | Pay-per-token | claude-haiku-4-5 recommended for low cost |
+
+See Section 9 for detailed setup instructions for each backend.
+
+#### Ollama sub-panel (shown when Ollama is selected)
+
+- **Endpoint:** URL where Ollama is running. Default: `http://localhost:11434`. Change this if Ollama runs on a different machine or port.
+- **Model:** The Ollama model name to use (e.g. `llama3`, `mistral`, `phi3`). Must be pulled first (`ollama pull llama3`).
+
+#### API sub-panel (shown for OpenAI or Claude)
+
+- **API Key:** Your secret API key. Shown as dots (password field). **Not saved to disk** — you must re-enter it each session.
+- **Model:** The model identifier (e.g. `gpt-4o-mini` for OpenAI, `claude-haiku-4-5-20251001` for Claude).
+- **Base URL:** Optional. Leave blank unless you use an OpenAI-compatible proxy or self-hosted endpoint.
+
+#### Generate Statistics (button)
+
+Click to compute. Runs in a background thread. When complete:
+
+- A CSV file is saved to the output folder (see Section 7), named `{source_file_stem}_statistics.csv`.
+- The status line shows how many labels were processed.
+
+The CSV contains one row per label and 25 columns. See Section 8 for a full description of every column.
+
+---
+
+## 7. Output files and folder structure
+
+All files saved by the plugin go into a dedicated folder named after your original input file:
 
 ```
-2D blobs: 4823                          ← blobs found per slice before linking
-3D blobs removed (< 7500 vox): 4756    ← noise removed
-Final 3D labels: 67                     ← microglia found
+/path/to/your/data/
+├── NT54_ch1.ims                        ← original input file
+└── NT54_ch1/                           ← output folder (created automatically)
+    ├── NT54_ch1_brain_mask.tif         ← binary brain mask (0/255, uint8)
+    ├── NT54_ch1_brain_only_NoBG.tif    ← brain only, background removed globally
+    ├── NT54_ch1_labels.tif             ← cell labels (int32)
+    └── NT54_ch1_statistics.csv         ← per-label statistics
 ```
 
-A new `*_labels` layer appears in napari, each cell shown in a different color.
+The folder is created the first time a file is saved. If no input file has been opened (e.g. you loaded a layer directly in napari), files are saved in the current working directory.
+
+**Brain-only suffixes** depending on background mode:
+
+| Mode | Suffix |
+|------|--------|
+| Off | *(none)* |
+| 1 — Exterior Removed | `_ExtRm` |
+| 2 — No Background | `_NoBG` |
+| 3 — Random Fill | `_RndFill` |
 
 ---
 
-## 7. Full workflow: from raw stack to microglia labels
+## 8. Statistics CSV — all columns explained
 
-This is the complete recommended workflow for creating microglia labels. Settings shown are those that have been validated and work well.
+The CSV produced by Generate Statistics has one row per label. Here is every column, in plain language:
+
+---
+
+### Identification
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `label` | integer | Label number matching the napari Labels layer (1, 2, 3, …) |
+
+---
+
+### Volume
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `volume_vox` | integer | Number of voxels belonging to this label |
+| `volume_um3` | float (µm³) | Physical volume in cubic micrometres. Computed as `volume_vox × Z_size × Y_size × X_size`. A typical zebrafish microglia is 1,000–10,000 µm³. |
+
+---
+
+### Position (centroid)
+
+The centroid is the 3D centre of mass of the label — the average position of all its voxels.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `centroid_z_vox` | float | Z position in voxel units |
+| `centroid_y_vox` | float | Y position in voxel units |
+| `centroid_x_vox` | float | X position in voxel units |
+| `centroid_z_um` | float (µm) | Z position in micrometres |
+| `centroid_y_um` | float (µm) | Y position in micrometres |
+| `centroid_x_um` | float (µm) | X position in micrometres |
+
+---
+
+### Bounding box
+
+The smallest rectangular box (aligned with the axes) that completely contains the label.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `bbox_dz_um` | float (µm) | Height of the bounding box in Z (depth of the cell in the axial direction) |
+| `bbox_dy_um` | float (µm) | Height of the bounding box in Y |
+| `bbox_dx_um` | float (µm) | Width of the bounding box in X |
+
+---
+
+### Size and shape
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `eq_diam_um` | float (µm) | **Equivalent sphere diameter** — the diameter of a perfect sphere with the same volume as this label. Formula: `(6V/π)^(1/3)`. Useful as a single "size" number regardless of shape. |
+| `axis1_um` | float (µm) | **Longest principal axis** — the maximum extent of the label along its longest geometric direction. Derived from the inertia tensor eigenvectors. |
+| `axis2_um` | float (µm) | **Middle principal axis** — approximated as the average of axis1 and axis3. |
+| `axis3_um` | float (µm) | **Shortest principal axis** — the minimum extent perpendicular to the longest axis. |
+| `elongation` | float | **Elongation ratio** = `axis1 / axis3`. A perfect sphere = 1.0. A cigar-shaped cell = 3.0 or more. The higher the number, the more stretched out the cell is. |
+| `principal_axis_dir` | string | The anatomical direction of the longest axis: `"Z"` (axial), `"Y"` (coronal), or `"X"` (sagittal). Tells you which direction the cell is elongated in. |
+
+---
+
+### Surface and compactness
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `solidity` | float (0–1) | **Solidity** = `volume / convex_hull_volume`. The convex hull is the smallest convex shape enclosing the label (like shrink-wrap). A solid, convex cell = 1.0. A lobulated or branchy cell with lots of indentations < 1.0. Typical range for microglia: 0.5–0.9. |
+| `extent` | float (0–1) | **Extent** = `volume / bounding_box_volume`. How much of the bounding box is actually filled. A cube = 1.0. A sphere ≈ 0.52. Highly branched cells = much lower. |
+| `surface_area_um2` | float (µm²) | **Surface area** in square micrometres, computed using marching cubes — a 3D mesh is generated from the label boundary and the triangle areas summed. A cell with long thin branches has a much larger surface area than a smooth sphere of the same volume. |
+| `sphericity` | float (0–1) | **Sphericity** = `π^(1/3) × (6V)^(2/3) / A` where V = volume and A = surface area. A perfect sphere = 1.0. Anything less than 1.0 is less spherical. Microglia: typically 0.3–0.8 depending on branch complexity. |
+
+---
+
+### Skeleton (branching structure)
+
+These columns require the `skan` package. If `skan` is not installed, all three will be 0.
+
+The algorithm skeletonizes the label (reduces it to a 1-voxel-wide skeleton) and then analyses the resulting graph of branches.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `n_branches` | integer | Number of skeleton branches. A sphere = 1 branch. A microglia with 4 protrusions = roughly 4–8 branches depending on how they connect. |
+| `n_endpoints` | integer | Number of free-end branch tips (branches that don't loop back). Corresponds roughly to the number of protrusion tips. |
+| `mean_branch_len_um` | float (µm) | Average length of all skeleton branches in micrometres. Longer values = longer protrusions or more extended cell body. |
+
+---
+
+### Description
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `description` | string | A plain-language sentence summarising the cell's shape, generated by the selected description backend. Example (rule-based): *"Label 3: Elongated along Y-axis (2.8:1), volume 4,521 µm³, centroid Z=87.3 Y=142.1 X=203.5 µm. Lobulated/irregular surface, sphericity 0.41, solidity 0.72. 6 branches, 4 endpoints (mean 8.3 µm)."* |
+
+---
+
+## 9. Setting up description backends
+
+### Rule-based (offline) — no setup needed
+
+The default. Descriptions are generated using built-in templates based on the numeric values. No internet connection, no API key, no external software. Always available.
+
+---
+
+### Ollama (local, free)
+
+Ollama runs a large language model locally on your machine. No data is sent to external servers, and there is no ongoing cost after the initial download.
+
+**Step 1 — Install Ollama**
+
+Go to [https://ollama.com/download](https://ollama.com/download) and download the installer for your operating system. Run it.
+
+- On Linux: `curl -fsSL https://ollama.com/install.sh | sh`
+- On Mac: Download the `.dmg` and drag to Applications.
+- On Windows: Download the `.exe` installer.
+
+**Step 2 — Download a model**
+
+Open a terminal and run:
+
+```bash
+ollama pull llama3
+```
+
+This downloads the Llama 3 model (~4.7 GB). You only need to do this once. Other models you can use:
+
+```bash
+ollama pull mistral      # ~4 GB, fast
+ollama pull phi3         # ~2 GB, smaller and faster
+ollama pull llama3:70b   # ~40 GB, highest quality — needs 64 GB+ RAM
+```
+
+**Step 3 — Verify Ollama is running**
+
+Ollama starts automatically in the background after installation. You can confirm it is running:
+
+```bash
+ollama list   # should show your downloaded models
+```
+
+**Step 4 — Configure in the plugin**
+
+In Tab 2, under Generate Statistics:
+
+1. Select **Ollama (local, free)** from the Description dropdown.
+2. **Endpoint:** leave as `http://localhost:11434` (default). Only change this if Ollama runs on a different machine on your network.
+3. **Model:** type the model name you downloaded, e.g. `llama3`.
+4. Click **Generate Statistics**.
+
+> If you get an `[Ollama error: ...]` in the CSV description column, check that Ollama is running (`ollama list`) and that the model name matches exactly what you downloaded.
+
+---
+
+### OpenAI API (paid)
+
+OpenAI's GPT models run on OpenAI's servers. You pay per token processed. For statistics descriptions (short prompts, short responses), the cost is very low — roughly $0.001–0.01 per 100 cells with `gpt-4o-mini`.
+
+**Step 1 — Create an OpenAI account**
+
+Go to [https://platform.openai.com](https://platform.openai.com) and sign up. You will need to provide a credit card for billing.
+
+**Step 2 — Generate an API key**
+
+1. Log in to [https://platform.openai.com](https://platform.openai.com).
+2. Click your profile icon (top right) → **API keys**.
+3. Click **+ Create new secret key**.
+4. Give it a name (e.g. "napari-skin-remover").
+5. Copy the key immediately — it starts with `sk-` and you can only see it once.
+
+**Step 3 — Configure in the plugin**
+
+In Tab 2, under Generate Statistics:
+
+1. Select **OpenAI API (paid)** from the Description dropdown.
+2. **API Key:** paste your `sk-...` key. It is stored only in memory — not saved to disk.
+3. **Model:** `gpt-4o-mini` (recommended — low cost, good quality). Other options:
+   - `gpt-4o` — highest quality, higher cost
+   - `gpt-3.5-turbo` — fastest, cheapest, lower quality
+4. **Base URL:** leave blank unless you use an OpenAI-compatible proxy.
+5. Click **Generate Statistics**.
+
+> The API key is **not saved to disk** for security. You must paste it again each time you open napari.
+
+---
+
+### Claude API (paid)
+
+Anthropic's Claude models. Similar pricing model to OpenAI. Claude Haiku is very fast and inexpensive.
+
+**Step 1 — Create an Anthropic account**
+
+Go to [https://console.anthropic.com](https://console.anthropic.com) and sign up with a credit card.
+
+**Step 2 — Generate an API key**
+
+1. Log in to [https://console.anthropic.com](https://console.anthropic.com).
+2. Click **API Keys** in the left sidebar.
+3. Click **+ Create Key**.
+4. Give it a name and copy the key (starts with `sk-ant-`).
+
+**Step 3 — Configure in the plugin**
+
+In Tab 2, under Generate Statistics:
+
+1. Select **Claude API (paid)** from the Description dropdown.
+2. **API Key:** paste your `sk-ant-...` key.
+3. **Model:** `claude-haiku-4-5-20251001` (recommended — fast and cheap). Other options:
+   - `claude-sonnet-4-6` — higher quality, moderate cost
+   - `claude-opus-4-6` — highest quality, highest cost
+4. **Base URL:** leave blank (not used for Claude).
+5. Click **Generate Statistics**.
+
+---
+
+## 10. Full workflow: from raw stack to labelled cells
 
 ### Step 1 — Open your file
 
-1. In the plugin (Tab 1), click **Open TIF / IMS file**
-2. Select your confocal stack
-3. All channels appear as layers
-4. **Click the microglia channel** (usually ch1, green) in the Layers panel
+1. Open the plugin (Plugins → MONAI Skin-Remover) in napari.
+2. Click **Open TIF / IMS file** and select your confocal stack.
+3. All channels appear as layers.
+4. **Click the microglia channel** (usually ch1, green) in the Layers panel.
+
+---
 
 ### Step 2 — Run skin removal
 
@@ -344,24 +720,25 @@ Set these values in Tab 1:
 
 | Setting | Value |
 |---------|-------|
-| Threshold | 0.30 (default) |
+| MONAI Threshold | 0.30 (default) |
 | Erosion | 0 (default) |
 | Background | **Option 2 — Remove globally** |
-| Tolerance | **+0.60%** |
+| BG Threshold | **0.60** |
 
 Click **Run Skin-Remover** and wait.
 
-**What you should see:** A `brain_only` layer where microglia appear as bright isolated blobs on a black background, with clear space between cells. If blobs look hollow or have halos, adjust the tolerance slightly.
+**What you should see:** A `brain_only` layer where microglia appear as bright isolated blobs on a black background, with clear space between cells.
 
-> **Tolerance tuning tips:**
-> - Too many dim pixels remaining → increase tolerance (e.g. +0.80%)
-> - Microglia missing pieces → decrease tolerance (e.g. +0.40%)
-> - The console prints the exact threshold used so you can compare runs
+**If blobs look hollow or have large halos:** Lower BG Threshold (e.g. 0.40).
+
+**If too much dim signal remains between cells:** Raise BG Threshold (e.g. 0.80).
+
+---
 
 ### Step 3 — Create labels
 
-1. **Click the `brain_only` layer** in the Layers panel to select it
-2. Switch to the **Create Labels** tab
+1. **Click the `brain_only_NoBG` layer** in the Layers panel.
+2. Switch to the **Create Labels** tab.
 3. Set these values:
 
 | Setting | Value |
@@ -371,70 +748,177 @@ Click **Run Skin-Remover** and wait.
 | Min overlap | 10% (default) |
 | Min volume | 7500 (default) |
 
-4. Click **Create Labels**
+4. Click **Create Labels**.
 
-**What you should see:** A labeled layer where each microglia is a different color. The console shows how many were found.
+**What you should see:** A labels layer where each cell is a different colour. The console prints how many were found.
 
-> **Tuning tips:**
-> - Too many fragments → increase σ XY or σ Z
-> - Cells merging together → decrease σ XY
-> - Many very small objects → increase Min volume
-> - Large cells being cut into pieces → decrease Min overlap %
-
-### Step 4 — Check results in napari
-
-- Toggle the labels layer on/off to compare with the original
-- Zoom into slices to verify cells are correctly separated
-- The label number of each cell is shown when you hover over it
+**Tuning:**
+- Too many tiny fragments → increase Min volume or increase both σ values
+- Two cells merged together → try Split Label (see below)
+- Cells cut across slices → decrease Min overlap or increase σ Z
 
 ---
 
-## 8. Reinstalling after an update
+### Step 4 — Review and edit labels in napari
 
-When a new version of the plugin is released, reinstall with:
+- Toggle the labels layer on/off to compare with the original
+- Hover over cells to see their label number
+- Zoom through Z slices to verify cells are correctly separated
+
+---
+
+### Step 5 — Split merged cells (if needed)
+
+If two cells were labelled as one because they touch:
+
+1. Hover over the merged blob and note its label number (shown in the napari status bar at the bottom).
+2. In Tab 2, under **Split Label**:
+   - **Target label:** enter the label number (or click the blob and click **Use selected**).
+   - **Split into:** 2 (or however many cells are merged).
+   - **Smooth σ:** 1.0 (default).
+   - **Min distance:** 5 (default).
+3. Click **Split Label**.
+4. The two (or more) cells are separated at their thinnest connection point.
+
+---
+
+### Step 6 — Sort labels (optional)
+
+Click **Resort Labels** to renumber cells by size or position. This is helpful for consistent reporting:
+
+- By **Size** (largest = label 1) — most common
+- By **Centroid Z/Y/X** — for atlas alignment
+
+---
+
+### Step 7 — Save labels
+
+Click **Save Labels**. A file dialog opens pre-filled with the output folder. Accept or change the name and click Save.
+
+---
+
+### Step 8 — Generate statistics
+
+1. Make sure the Labels layer is selected.
+2. Under **Generate Statistics**, choose your description backend.
+3. Click **Generate Statistics**.
+4. The CSV is saved automatically to the output folder.
+
+---
+
+## 11. Reinstalling after an update
 
 ```bash
 pip uninstall napari-skin-remover -y
 pip install git+https://github.com/CTichy/napari-skin-remover.git
 ```
 
-Then **fully close and reopen napari** — important! If napari is still running when you reinstall, it will keep using the old version until restarted.
+Then **fully close and reopen napari**. If napari is running when you reinstall, it uses the old version until restarted.
 
-> **Your model path is remembered** across reinstalls — you do not need to browse to the `.pth` file again.
+> **Your model path and settings are preserved** across reinstalls. The config is stored in `~/.config/napari-skin-remover/config.json`.
 
 ---
 
-## 9. Troubleshooting
+## 12. Troubleshooting
 
-### The plugin doesn't appear in Plugins menu
-- Make sure napari is fully closed and reopened after installation
-- Try running: `pip show napari-skin-remover` to confirm it installed
+### The plugin does not appear in Plugins menu
+
+- Make sure napari is fully closed and reopened after installation.
+- Verify installation: `pip show napari-skin-remover`
+
+---
 
 ### "No model selected" after reinstalling
-- Click `[...]` and browse to your `.pth` file again
-- The config is stored in `~/.config/napari-skin-remover/config.json`
 
-### Processing runs on CPU (very slow) on Mac
-- Check your PyTorch version supports MPS: `python -c "import torch; print(torch.backends.mps.is_available())"`
-- Should print `True` on Apple Silicon
+- Click `[...]` and browse to your `.pth` file.
+- Config path: `~/.config/napari-skin-remover/config.json`
 
-### brain_only looks mostly empty / all black
-- Tolerance is too high — lower it (e.g. from +0.60% to +0.30%)
-- Or background mode probe got confused — try running on a different channel first
+---
+
+### Processing runs on CPU (very slow)
+
+**NVIDIA GPU:** Check that PyTorch sees CUDA:
+
+```bash
+python -c "import torch; print(torch.cuda.is_available())"
+```
+
+Should print `True`. If `False`, reinstall PyTorch with CUDA support from [https://pytorch.org](https://pytorch.org).
+
+**Apple Silicon:** Check MPS:
+
+```bash
+python -c "import torch; print(torch.backends.mps.is_available())"
+```
+
+Should print `True` on M1/M2/M3.
+
+---
+
+### Statistics are slow (CPU only, no GPU batch)
+
+Install CuPy and cuCIM for GPU-accelerated regionprops:
+
+```bash
+pip install cupy-cuda12x cucim
+```
+
+Replace `cuda12x` with your actual CUDA version if different (e.g. `cuda11x` for CUDA 11). After installing, reopen napari — the console will print `regionprops: cuCIM GPU` when statistics are computed.
+
+---
+
+### `brain_only` layer looks mostly empty (all black)
+
+BG Threshold is too high — lower it (e.g. from 0.60 to 0.30).
+
+---
 
 ### Create Labels finds 0 or too few objects
-- Lower the Min volume slider (e.g. to 5000)
-- Increase σ XY and σ Z slightly
-- Make sure you selected the `brain_only` layer (not the original channel) before clicking Create Labels
+
+- Lower **Min volume** (try 5000).
+- Increase **σ XY** and **σ Z** slightly.
+- Make sure you selected the `brain_only` layer (not the raw channel) before clicking Create Labels.
+
+---
 
 ### Create Labels finds hundreds of tiny fragments
-- Increase Min volume to 10000
-- Make sure Option 2 with a sufficient tolerance was run first — the brain_only layer must have clean gaps between cells
 
-### The labels layer shows cells merging that shouldn't merge
-- Lower σ XY (e.g. from 1.5 to 1.0)
-- Lower σ Z (e.g. from 3.0 to 1.5)
-- Increase Min overlap % (e.g. from 10% to 20%)
+- Increase **Min volume** to 10000.
+- Ensure Option 2 with sufficient BG Threshold was used — the brain_only layer must have clean gaps between cells.
+
+---
+
+### Two cells appear as one label (merged)
+
+- Use **Split Label** (Section 6 above) to separate them at the thinnest neck.
+- Or decrease σ XY and rerun Create Labels.
+
+---
+
+### Split Label error: "Only N sub-volume(s) found"
+
+The blob doesn't have a clear separation into the requested number of parts.
+
+- Reduce **Smooth σ** (the distance field is over-smoothed and the saddle disappears).
+- Reduce **Min distance** (the two centres are being rejected as too close).
+- Check the blob is genuinely two distinct cells — zoom in and inspect it slice by slice.
+
+---
+
+### Ollama description shows `[Ollama error: ...]`
+
+- Verify Ollama is running: open a terminal and run `ollama list`.
+- If not running, start it: `ollama serve`
+- Check the model name matches exactly: `ollama list` shows available models.
+- Default endpoint `http://localhost:11434` — change only if Ollama is on a different machine.
+
+---
+
+### OpenAI/Claude API returns an error
+
+- The API key must be pasted fresh each session — it is not saved to disk.
+- Check your account has billing set up and enough credit.
+- The model name must match exactly (e.g. `gpt-4o-mini`, `claude-haiku-4-5-20251001`).
 
 ---
 
@@ -443,20 +927,22 @@ Then **fully close and reopen napari** — important! If napari is still running
 ### Tab 1 — Skin Remover
 
 | Control | Recommended | What it does |
-|---------|------------|--------------|
-| Threshold | 0.30 | AI confidence cutoff for brain detection |
-| Erosion | 0 | Shrinks mask inward (strips skin rim) |
-| Background | Option 2 | Removes background globally |
-| Tolerance | +0.60% | Fine-tunes background threshold |
+|---------|-------------|--------------|
+| MONAI Threshold | 0.30 | AI confidence cutoff |
+| Erosion | 0 | Strips voxels from mask edge |
+| Background | Option 2 | Removes background globally (best for labels) |
+| BG Threshold | 0.60 | Fine-tunes background removal level |
 
 ### Tab 2 — Create Labels
 
 | Control | Recommended | What it does |
-|---------|------------|--------------|
-| σ XY | 1.5 | Contour softness in each slice |
-| σ Z | 3.0 | Cross-slice blob connection |
+|---------|-------------|--------------|
+| Smooth σ XY | 1.5 | Contour softness within each slice |
+| Smooth σ Z | 3.0 | Cross-slice blob connectivity |
 | Min overlap | 10% | Overlap needed to link blobs across slices |
 | Min volume | 7500 | Minimum voxels to keep a 3D object |
+| Split σ | 1.0 | Smoothness for watershed split |
+| Min distance | 5 | Peak separation for split detection |
 
 ---
 
