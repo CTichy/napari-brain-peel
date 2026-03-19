@@ -516,14 +516,29 @@ def split_label(
         markers[tuple(c)] = i
     split_crop = watershed(-dist_smooth, markers, mask=mask_crop)
 
-    # ── 6. Erode each part by 1 voxel → 1-voxel gap on every boundary ────
-    #    This guarantees the parts never touch and each wall has empty space.
-    from scipy.ndimage import binary_erosion
-    eroded_crop = np.zeros(mask_crop.shape, dtype=np.int32)
-    for i in range(1, n_splits + 1):
-        part    = split_crop == i
-        eroded  = binary_erosion(part, iterations=1)
-        eroded_crop[eroded] = i
+    # ── 6. Clear only the cut interface (1 voxel each side) ──────────────
+    #    Find face-adjacent voxel pairs belonging to different parts and zero
+    #    both.  The outer surface of each part is left completely untouched.
+    eroded_crop = split_crop.copy()
+    interface   = np.zeros(split_crop.shape, dtype=bool)
+    for axis in range(split_crop.ndim):
+        slc_lo = [slice(None)] * split_crop.ndim
+        slc_hi = [slice(None)] * split_crop.ndim
+        slc_lo[axis] = slice(None, -1)
+        slc_hi[axis] = slice(1, None)
+        slc_lo = tuple(slc_lo)
+        slc_hi = tuple(slc_hi)
+        both = (
+            (split_crop[slc_lo] > 0) &
+            (split_crop[slc_hi] > 0) &
+            (split_crop[slc_lo] != split_crop[slc_hi])
+        )
+        tmp_lo = np.zeros(split_crop.shape, dtype=bool)
+        tmp_hi = np.zeros(split_crop.shape, dtype=bool)
+        tmp_lo[slc_lo] = both
+        tmp_hi[slc_hi] = both
+        interface |= tmp_lo | tmp_hi
+    eroded_crop[interface] = 0
 
     # ── 7. Write result back into full-volume label array ─────────────────
     split_full = np.zeros(mask.shape, dtype=np.int32)
