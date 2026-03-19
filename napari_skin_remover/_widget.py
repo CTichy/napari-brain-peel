@@ -679,16 +679,40 @@ class SkinRemoverWidget(QWidget):
         if not path_str:
             return
         path = Path(path_str)
-        self._status(f"Loading {path.name}...")
-        try:
-            channels = load_file(path)
+        self._status(f"Loading {path.name}… (IMS files may take ~1 min)")
+        self._open_btn.setEnabled(False)
+
+        result = {}
+
+        def _worker():
+            try:
+                result["channels"] = load_file(path)
+            except Exception as exc:
+                result["error"] = str(exc)
+                import traceback as _tb
+                _tb.print_exc()
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        timer = QTimer(self)
+
+        def _poll():
+            if thread.is_alive():
+                return
+            timer.stop()
+            self._open_btn.setEnabled(True)
+            if "error" in result:
+                self._status(f"ERROR: {result['error']}")
+                return
+            channels = result["channels"]
             self._add_channels(path, channels)
-            n = len(channels)
+            n     = len(channels)
             shape = channels[0][0].shape
             self._status(f"Loaded: {path.name}  {n} ch  {shape}")
-        except Exception as exc:
-            self._status(f"ERROR: {exc}")
-            print(f"ERROR loading {path.name}: {exc}")
+
+        timer.timeout.connect(_poll)
+        timer.start(500)
 
     def _output_dir(self) -> Path:
         """
