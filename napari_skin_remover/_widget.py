@@ -15,7 +15,7 @@ import napari
 from qtpy.QtWidgets import (
     QPushButton, QLabel, QWidget, QVBoxLayout, QHBoxLayout,
     QSlider, QCheckBox, QFileDialog, QSizePolicy, QButtonGroup, QRadioButton,
-    QTabWidget, QComboBox, QSpinBox,
+    QTabWidget, QComboBox, QSpinBox, QLineEdit,
 )
 from qtpy.QtCore import Qt, QTimer
 
@@ -23,28 +23,34 @@ from ._io import load_file
 from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
 from ._background import remove_outside_brain, remove_global, fill_outside_brain_random
 from ._labeling import create_labels, resort_labels, split_label
+from ._statistics import compute_stats
 
 _CONFIG_PATH = Path.home() / ".config" / "napari-skin-remover" / "config.json"
 
+# Suffix added to brain_only filename for each background mode
+_BG_SUFFIX = {
+    0: "",          # Off — no processing
+    1: "_ExtRm",    # Exterior Removed (outside-brain BG stripped)
+    2: "_NoBG",     # No Background (global removal)
+    3: "_RndFill",  # Random Fill (background replaced with noise)
+}
 
-def _load_saved_model_path():
-    """Return the last-used model path from config, or None."""
+
+def _load_config() -> dict:
+    """Load full config dict from disk, return {} on any failure."""
     try:
         if _CONFIG_PATH.exists():
-            data = json.loads(_CONFIG_PATH.read_text())
-            p = Path(data.get("model_path", ""))
-            if p.exists():
-                return p
+            return json.loads(_CONFIG_PATH.read_text())
     except Exception:
         pass
-    return None
+    return {}
 
 
-def _save_model_path(path: Path):
-    """Persist model path to config file."""
+def _save_config(data: dict) -> None:
+    """Persist config dict to disk."""
     try:
         _CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
-        _CONFIG_PATH.write_text(json.dumps({"model_path": str(path)}))
+        _CONFIG_PATH.write_text(json.dumps(data, indent=2))
     except Exception:
         pass
 
@@ -86,10 +92,11 @@ class SkinRemoverWidget(QWidget):
     def __init__(self, napari_viewer: "napari.viewer.Viewer"):
         super().__init__()
         self._viewer = napari_viewer
+        cfg = _load_config()
         # Model path priority: saved config > hardcoded default > None
-        saved = _load_saved_model_path()
-        if saved:
-            initial_model = saved
+        saved_model = Path(cfg.get("model_path", ""))
+        if saved_model.exists():
+            initial_model = saved_model
         elif DEFAULT_MODEL.exists():
             initial_model = DEFAULT_MODEL
         else:
@@ -98,6 +105,7 @@ class SkinRemoverWidget(QWidget):
             "model_path":     initial_model,
             "last_file_path": None,
             "metadata":       None,
+            "config":         cfg,
         }
         self._build_ui()
         self._connect_signals()
@@ -407,6 +415,93 @@ class SkinRemoverWidget(QWidget):
         self._save_labels_status_lbl.setWordWrap(True)
         t2.addWidget(self._save_labels_status_lbl)
 
+        t2.addWidget(_sep())
+
+        # ── Statistics section ────────────────────────────────────────── #
+        stats_hdr = QLabel("Generate Statistics")
+        stats_hdr.setStyleSheet("font-weight: bold;")
+        t2.addWidget(stats_hdr)
+
+        cfg = self._state.get("config", {})
+
+        desc_row = QHBoxLayout()
+        desc_row.addWidget(QLabel("Description:"))
+        self._stats_backend_combo = QComboBox()
+        self._stats_backend_combo.addItem("Rule-based (offline)",    "rule")
+        self._stats_backend_combo.addItem("Ollama (local, free)",    "ollama")
+        self._stats_backend_combo.addItem("OpenAI API (paid)",       "openai")
+        self._stats_backend_combo.addItem("Claude API (paid)",       "claude")
+        # Restore saved backend selection
+        saved_backend = cfg.get("stats_backend", "rule")
+        for i in range(self._stats_backend_combo.count()):
+            if self._stats_backend_combo.itemData(i) == saved_backend:
+                self._stats_backend_combo.setCurrentIndex(i)
+                break
+        desc_row.addWidget(self._stats_backend_combo)
+        t2.addLayout(desc_row)
+
+        stats_note = QLabel(
+            "  Rule-based: no internet, no key needed.\n"
+            "  Ollama: install from ollama.com, then: ollama pull llama3\n"
+            "  Paid APIs: provide your own key below."
+        )
+        stats_note.setStyleSheet("color: #aaa; font-size: 10px;")
+        stats_note.setWordWrap(True)
+        t2.addWidget(stats_note)
+
+        # ── Ollama sub-panel ──────────────────────────────────────────── #
+        self._ollama_panel = QWidget()
+        op = QVBoxLayout()
+        op.setContentsMargins(0, 0, 0, 0)
+        op.setSpacing(3)
+        ep_row = QHBoxLayout()
+        ep_row.addWidget(QLabel("  Endpoint:"))
+        self._ollama_endpoint_edit = QLineEdit(cfg.get("ollama_endpoint", "http://localhost:11434"))
+        ep_row.addWidget(self._ollama_endpoint_edit)
+        op.addLayout(ep_row)
+        om_row = QHBoxLayout()
+        om_row.addWidget(QLabel("  Model:"))
+        self._ollama_model_edit = QLineEdit(cfg.get("ollama_model", "llama3"))
+        om_row.addWidget(self._ollama_model_edit)
+        op.addLayout(om_row)
+        self._ollama_panel.setLayout(op)
+        t2.addWidget(self._ollama_panel)
+
+        # ── Remote API sub-panel ──────────────────────────────────────── #
+        self._api_panel = QWidget()
+        ap = QVBoxLayout()
+        ap.setContentsMargins(0, 0, 0, 0)
+        ap.setSpacing(3)
+        ak_row = QHBoxLayout()
+        ak_row.addWidget(QLabel("  API Key:"))
+        self._api_key_edit = QLineEdit(cfg.get("api_key", ""))
+        self._api_key_edit.setEchoMode(QLineEdit.Password)
+        self._api_key_edit.setPlaceholderText("sk-… or ant-…")
+        ak_row.addWidget(self._api_key_edit)
+        ap.addLayout(ak_row)
+        am_row = QHBoxLayout()
+        am_row.addWidget(QLabel("  Model:"))
+        self._api_model_edit = QLineEdit(cfg.get("api_model", ""))
+        self._api_model_edit.setPlaceholderText("e.g. gpt-4o-mini or claude-haiku-4-5-20251001")
+        am_row.addWidget(self._api_model_edit)
+        ap.addLayout(am_row)
+        au_row = QHBoxLayout()
+        au_row.addWidget(QLabel("  Base URL:"))
+        self._api_url_edit = QLineEdit(cfg.get("api_url", ""))
+        self._api_url_edit.setPlaceholderText("optional override (OpenAI-compat proxies)")
+        au_row.addWidget(self._api_url_edit)
+        ap.addLayout(au_row)
+        self._api_panel.setLayout(ap)
+        t2.addWidget(self._api_panel)
+
+        self._stats_btn = QPushButton("Generate Statistics")
+        self._stats_btn.setStyleSheet("QPushButton { padding: 5px; }")
+        t2.addWidget(self._stats_btn)
+
+        self._stats_status_lbl = QLabel("")
+        self._stats_status_lbl.setWordWrap(True)
+        t2.addWidget(self._stats_status_lbl)
+
         t2.addStretch()
         tab2.setLayout(t2)
         tabs.addTab(tab2, "Create Labels")
@@ -458,9 +553,13 @@ class SkinRemoverWidget(QWidget):
         self._split_use_sel_btn.clicked.connect(self._on_use_selected_label)
         self._split_btn.clicked.connect(self._on_split_label)
         self._save_labels_btn.clicked.connect(self._on_save_labels)
+        self._stats_backend_combo.currentIndexChanged.connect(self._on_stats_backend_changed)
+        self._stats_btn.clicked.connect(self._on_generate_stats)
         self._viewer.layers.events.inserted.connect(self._refresh_layer_info)
         self._viewer.layers.events.removed.connect(self._refresh_layer_info)
         self._viewer.layers.selection.events.changed.connect(self._refresh_layer_info)
+        # Apply initial panel visibility
+        self._on_stats_backend_changed()
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -591,6 +690,27 @@ class SkinRemoverWidget(QWidget):
             self._status(f"ERROR: {exc}")
             print(f"ERROR loading {path.name}: {exc}")
 
+    def _output_dir(self) -> Path:
+        """
+        Return (and create) the output folder for all saved files.
+        Folder = <original_file_parent> / <original_file_stem>
+        Falls back to current working directory if no file has been opened.
+        """
+        fp = self._state.get("last_file_path")
+        if fp:
+            out = fp.parent / fp.stem
+        else:
+            out = Path(".")
+        out.mkdir(parents=True, exist_ok=True)
+        return out
+
+    def _save_cfg(self, **kwargs) -> None:
+        """Merge kwargs into the config and persist."""
+        cfg = self._state.get("config", {})
+        cfg.update(kwargs)
+        self._state["config"] = cfg
+        _save_config(cfg)
+
     def _on_browse_model(self):
         path_str, _ = QFileDialog.getOpenFileName(
             self,
@@ -603,7 +723,7 @@ class SkinRemoverWidget(QWidget):
         p = Path(path_str)
         self._state["model_path"] = p
         self._model_lbl.setText(path_str)
-        _save_model_path(p)
+        self._save_cfg(model_path=str(p))
         self._status(f"Model: {p.name}")
 
     def _on_run(self):
@@ -706,8 +826,11 @@ class SkinRemoverWidget(QWidget):
             nonzero_pct = 100.0 * brain_mask.sum() / brain_mask.size
             print(f"Brain mask: {brain_mask.sum():,} voxels ({nonzero_pct:.1f}%)")
 
+            bg_suffix  = _BG_SUFFIX.get(bg_mode, "")
+            only_name  = f"{stem}_brain_only{bg_suffix}"
+
             # Replace stale output layers if present
-            for lname in (f"{stem}_brain_mask", f"{stem}_brain_only"):
+            for lname in (f"{stem}_brain_mask", only_name):
                 if lname in self._viewer.layers:
                     self._viewer.layers.remove(lname)
 
@@ -723,15 +846,16 @@ class SkinRemoverWidget(QWidget):
                 pass  # older napari — default label color is fine
             self._viewer.add_image(
                 brain_only,
-                name=f"{stem}_brain_only",
+                name=only_name,
                 colormap="gray",
                 scale=scale,
             )
             self._refresh_layer_info()
 
-            out_dir = file_path.parent if file_path else Path(".")
+            out_dir    = self._output_dir()
+            bg_suffix  = _BG_SUFFIX.get(bg_mode, "")
             if self._save_only_cb.isChecked():
-                out = out_dir / f"{stem}_brain_only.tif"
+                out = out_dir / f"{stem}_brain_only{bg_suffix}.tif"
                 tifffile.imwrite(str(out), brain_only, compression="zlib")
                 print(f"Saved: {out}")
             if self._save_mask_cb.isChecked():
@@ -884,8 +1008,7 @@ class SkinRemoverWidget(QWidget):
         if lyr is None:
             self._save_labels_status_lbl.setText("No Labels layer selected.")
             return
-        file_path = self._state.get("last_file_path")
-        default   = str((file_path.parent if file_path else Path(".")) / f"{lyr.name}.tif")
+        default = str(self._output_dir() / f"{lyr.name}.tif")
         out_str, _ = QFileDialog.getSaveFileName(
             self, "Save Labels", default, "TIFF (*.tif *.tiff)"
         )
@@ -897,6 +1020,85 @@ class SkinRemoverWidget(QWidget):
             print(f"Labels saved: {out_str}")
         except Exception as exc:
             self._save_labels_status_lbl.setText(f"ERROR: {exc}")
+
+    def _on_stats_backend_changed(self, *_):
+        backend = self._stats_backend_combo.currentData()
+        self._ollama_panel.setVisible(backend == "ollama")
+        self._api_panel.setVisible(backend in ("openai", "claude"))
+        self._save_cfg(stats_backend=backend)
+
+    def _on_generate_stats(self):
+        lyr = self._active_labels_layer()
+        if lyr is None:
+            self._stats_status_lbl.setText("No Labels layer selected.")
+            return
+
+        # Scale from layer — never hardcoded
+        sc = lyr.scale
+        if len(sc) != 3 or all(v == 1.0 for v in sc):
+            # Try active image layer scale as fallback
+            img = self._active_layer()
+            sc = img.scale if img is not None and len(img.scale) == 3 else sc
+        scale_zyx = tuple(float(v) for v in sc)
+
+        backend = self._stats_backend_combo.currentData()
+
+        # Build backend_config and persist API settings (key stored locally only)
+        backend_config = {"backend": backend}
+        if backend == "ollama":
+            ep = self._ollama_endpoint_edit.text().strip()
+            mo = self._ollama_model_edit.text().strip()
+            backend_config.update(ollama_endpoint=ep, ollama_model=mo)
+            self._save_cfg(ollama_endpoint=ep, ollama_model=mo)
+        elif backend in ("openai", "claude"):
+            ak  = self._api_key_edit.text().strip()
+            mo  = self._api_model_edit.text().strip()
+            url = self._api_url_edit.text().strip()
+            backend_config.update(api_key=ak, api_model=mo, api_url=url)
+            # Persist model + URL but NOT the API key for security
+            self._save_cfg(api_model=mo, api_url=url)
+
+        labels    = np.asarray(lyr.data)
+        out_dir   = self._output_dir()
+        stem      = self._state["last_file_path"].stem if self._state.get("last_file_path") else lyr.name
+        out_csv   = out_dir / f"{stem}_statistics.csv"
+
+        self._stats_btn.setEnabled(False)
+        self._stats_status_lbl.setText("Computing statistics…")
+
+        result = {}
+
+        def _worker():
+            try:
+                df = compute_stats(labels, scale_zyx, backend_config=backend_config)
+                result["df"] = df
+            except Exception as exc:
+                traceback.print_exc()
+                result["error"] = str(exc)
+
+        thread = threading.Thread(target=_worker, daemon=True)
+        thread.start()
+
+        timer = QTimer(self)
+
+        def _poll():
+            if thread.is_alive():
+                return
+            timer.stop()
+            if "error" in result:
+                self._stats_status_lbl.setText(f"ERROR: {result['error']}")
+                self._stats_btn.setEnabled(True)
+                return
+            df = result["df"]
+            df.to_csv(str(out_csv), index=False)
+            self._stats_status_lbl.setText(
+                f"Done — {len(df)} labels. Saved: {out_csv.name}"
+            )
+            print(f"Statistics saved: {out_csv}")
+            self._stats_btn.setEnabled(True)
+
+        timer.timeout.connect(_poll)
+        timer.start(500)
 
     def _on_create_labels(self):
         # Read active layer
