@@ -415,14 +415,28 @@ class SkinRemoverWidget(QWidget):
         self._save_labels_status_lbl.setWordWrap(True)
         t2.addWidget(self._save_labels_status_lbl)
 
-        t2.addWidget(_sep())
+        t2.addStretch()
+        tab2.setLayout(t2)
+        tabs.addTab(tab2, "Create Labels")
 
-        # ── Statistics section ────────────────────────────────────────── #
-        stats_hdr = QLabel("Generate Statistics")
-        stats_hdr.setStyleSheet("font-weight: bold;")
-        t2.addWidget(stats_hdr)
+        # ============================================================ #
+        # TAB 3 — Statistics
+        # ============================================================ #
+        tab3 = QWidget()
+        t3 = QVBoxLayout()
+        t3.setSpacing(6)
 
         cfg = self._state.get("config", {})
+
+        t3_note = QLabel(
+            "Select a Labels layer, then choose a description\n"
+            "backend and click Generate Statistics."
+        )
+        t3_note.setWordWrap(True)
+        t3_note.setStyleSheet("color: #aaa; font-size: 10px;")
+        t3.addWidget(t3_note)
+
+        t3.addWidget(_sep())
 
         desc_row = QHBoxLayout()
         desc_row.addWidget(QLabel("Description:"))
@@ -438,7 +452,7 @@ class SkinRemoverWidget(QWidget):
                 self._stats_backend_combo.setCurrentIndex(i)
                 break
         desc_row.addWidget(self._stats_backend_combo)
-        t2.addLayout(desc_row)
+        t3.addLayout(desc_row)
 
         stats_note = QLabel(
             "  Rule-based: no internet, no key needed.\n"
@@ -447,7 +461,7 @@ class SkinRemoverWidget(QWidget):
         )
         stats_note.setStyleSheet("color: #aaa; font-size: 10px;")
         stats_note.setWordWrap(True)
-        t2.addWidget(stats_note)
+        t3.addWidget(stats_note)
 
         # ── Ollama sub-panel ──────────────────────────────────────────── #
         self._ollama_panel = QWidget()
@@ -465,7 +479,7 @@ class SkinRemoverWidget(QWidget):
         om_row.addWidget(self._ollama_model_edit)
         op.addLayout(om_row)
         self._ollama_panel.setLayout(op)
-        t2.addWidget(self._ollama_panel)
+        t3.addWidget(self._ollama_panel)
 
         # ── Remote API sub-panel ──────────────────────────────────────── #
         self._api_panel = QWidget()
@@ -492,19 +506,21 @@ class SkinRemoverWidget(QWidget):
         au_row.addWidget(self._api_url_edit)
         ap.addLayout(au_row)
         self._api_panel.setLayout(ap)
-        t2.addWidget(self._api_panel)
+        t3.addWidget(self._api_panel)
+
+        t3.addWidget(_sep())
 
         self._stats_btn = QPushButton("Generate Statistics")
-        self._stats_btn.setStyleSheet("QPushButton { padding: 5px; }")
-        t2.addWidget(self._stats_btn)
+        self._stats_btn.setStyleSheet("QPushButton { font-weight: bold; padding: 6px; }")
+        t3.addWidget(self._stats_btn)
 
         self._stats_status_lbl = QLabel("")
         self._stats_status_lbl.setWordWrap(True)
-        t2.addWidget(self._stats_status_lbl)
+        t3.addWidget(self._stats_status_lbl)
 
-        t2.addStretch()
-        tab2.setLayout(t2)
-        tabs.addTab(tab2, "Create Labels")
+        t3.addStretch()
+        tab3.setLayout(t3)
+        tabs.addTab(tab3, "Statistics")
 
         # ── outer layout ────────────────────────────────────────────── #
         outer = QVBoxLayout()
