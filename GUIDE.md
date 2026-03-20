@@ -13,10 +13,13 @@
 5. [Tab 1 — Skin Remover](#5-tab-1--skin-remover)
 6. [Tab 2 — Create Labels](#6-tab-2--create-labels)
 7. [Tab 3 — Statistics](#7-tab-3--statistics)
+   - [7a. Analysing cells by brain region (optic tectum / hindbrain)](#brain-regions-optional)
+   - [7b. Intensity statistics per label](#intensity-statistics-optional)
 8. [Output files and folder structure](#8-output-files-and-folder-structure)
 9. [Statistics CSV — all columns explained](#9-statistics-csv--all-columns-explained)
 10. [Setting up description backends](#10-setting-up-description-backends)
 11. [Full workflow: from raw stack to labelled cells](#11-full-workflow-from-raw-stack-to-labelled-cells)
+    - [Step 8a. Assign cells to optic tectum / hindbrain](#step-8a--assign-cells-to-brain-regions-optional)
 12. [Reinstalling after an update](#12-reinstalling-after-an-update)
 13. [Troubleshooting](#13-troubleshooting)
 
@@ -909,9 +912,52 @@ Click **Save Labels**. A file dialog opens pre-filled with the output folder. Ac
 2. Make sure the Labels layer is selected in napari.
 3. Choose your description backend.
 4. *(Optional)* Select a fluorescence channel under **Intensity statistics** to add mean/integrated/CV columns.
-5. *(Optional)* Draw region boundary lines in a Shapes layer, then select it under **Brain regions** and enter the region names.
+5. *(Optional — see Step 8a below)* Draw region boundary lines in a Shapes layer, then select it under **Brain regions** and enter the region names (e.g. `Optic tectum, Hindbrain`).
 6. Click **Generate Statistics**.
 7. The CSV is saved automatically to the output folder.
+
+---
+
+### Step 8a — Assign cells to brain regions (optional)
+
+This lets you label each cell as belonging to the **optic tectum**, the **hindbrain**, or any other anatomical region you define by drawing a dividing line across the image.
+
+**What you need:** A rough idea of where the optic tectum ends and the hindbrain begins in your stack. The boundary is visible as a change in cell distribution and can usually be identified by scrolling through Z slices — look for a denser band of cells or a clear anatomical gap.
+
+**Step-by-step:**
+
+1. **Scroll to a representative Z slice** where the optic tectum / hindbrain boundary is visible. In zebrafish 4dpf, this boundary typically appears roughly at the midpoint of the anterior–posterior axis in the XY view.
+
+2. **Add a Shapes layer:** In napari, click the **+** icon in the toolbar and choose **Shapes**, or go to **Layers → Add shapes layer**.
+
+3. **Select the line tool:** In the shapes toolbar (appears when the Shapes layer is active), click the **line** icon.
+
+4. **Draw the boundary line:** Click once at the dorsal edge of the brain (top of the image) and once at the ventral edge (bottom) at the point where the optic tectum meets the hindbrain. Draw from **left to right** (anterior side left). The line does not need to span the entire brain — just enough to indicate the boundary direction.
+
+   > Tip: if unsure of the exact position, draw the line slightly inside the optic tectum (more anterior). You can always adjust and re-run statistics.
+
+5. *(For three or more regions)* Add more lines for each additional boundary, always drawing left → right (anterior → posterior order).
+
+6. **Switch to Tab 3 — Statistics** in the plugin.
+
+7. Under **Brain regions**:
+   - **Boundary lines:** select your Shapes layer from the dropdown.
+   - **Region names:** type the names separated by commas, anterior to posterior:
+     ```
+     Optic tectum, Hindbrain
+     ```
+     For three regions, e.g.: `Forebrain, Optic tectum, Hindbrain`
+
+8. Click **Generate Statistics**.
+
+**Result:** The CSV will include two extra columns:
+
+| Column | Description |
+|--------|-------------|
+| `brain_region` | Name of the region each cell belongs to |
+| `region_boundary_dist_um` | Distance in µm from the cell to the nearest boundary line |
+
+You can then filter the CSV in Excel or Python by `brain_region` to compare microglia density, morphology, or intensity between the optic tectum and the hindbrain.
 
 ---
 
