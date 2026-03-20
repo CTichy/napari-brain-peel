@@ -63,6 +63,18 @@ def _sep():
     return w
 
 
+def _extract_region_lines_um(shapes_lyr):
+    """Extract 'line' shapes from a Shapes layer as (2, 2) YX arrays in µm."""
+    scale = np.array(shapes_lyr.scale)
+    lines = []
+    for data, stype in zip(shapes_lyr.data, shapes_lyr.shape_type):
+        if stype != "line":
+            continue
+        pts = np.array(data) * scale   # (2, ndim)
+        lines.append(pts[:, -2:])      # last 2 dims = YX → shape (2, 2)
+    return lines
+
+
 class SkinRemoverWidget(QWidget):
     """
     Napari dock panel for MONAI skin removal.
@@ -110,6 +122,7 @@ class SkinRemoverWidget(QWidget):
         self._build_ui()
         self._connect_signals()
         self._refresh_layer_info()
+        self._refresh_stats_layers()
 
     # ------------------------------------------------------------------ #
     # UI construction
@@ -510,6 +523,49 @@ class SkinRemoverWidget(QWidget):
 
         t3.addWidget(_sep())
 
+        # ── Intensity statistics ──────────────────────────────────────── #
+        t3.addWidget(QLabel("Intensity statistics (optional):"))
+        img_row = QHBoxLayout()
+        img_row.addWidget(QLabel("  Image layer:"))
+        self._stats_image_combo = QComboBox()
+        self._stats_image_combo.addItem("None", None)
+        img_row.addWidget(self._stats_image_combo)
+        t3.addLayout(img_row)
+        img_note = QLabel(
+            "  Adds mean_intensity, integrated_intensity, intensity_cv per label."
+        )
+        img_note.setStyleSheet("color: #aaa; font-size: 10px;")
+        img_note.setWordWrap(True)
+        t3.addWidget(img_note)
+
+        t3.addWidget(_sep())
+
+        # ── Brain regions ─────────────────────────────────────────────── #
+        t3.addWidget(QLabel("Brain regions (optional):"))
+        shapes_row = QHBoxLayout()
+        shapes_row.addWidget(QLabel("  Boundary lines:"))
+        self._stats_shapes_combo = QComboBox()
+        self._stats_shapes_combo.addItem("None", None)
+        shapes_row.addWidget(self._stats_shapes_combo)
+        t3.addLayout(shapes_row)
+        region_row = QHBoxLayout()
+        region_row.addWidget(QLabel("  Region names:"))
+        self._stats_region_names_edit = QLineEdit()
+        self._stats_region_names_edit.setPlaceholderText(
+            "e.g. Optic tectum, Hindbrain  (comma-sep., anterior→posterior)"
+        )
+        region_row.addWidget(self._stats_region_names_edit)
+        t3.addLayout(region_row)
+        regions_note = QLabel(
+            "  Draw 'line' shapes in a Shapes layer to mark region boundaries\n"
+            "  (sorted anterior→posterior). N lines → N+1 region names."
+        )
+        regions_note.setStyleSheet("color: #aaa; font-size: 10px;")
+        regions_note.setWordWrap(True)
+        t3.addWidget(regions_note)
+
+        t3.addWidget(_sep())
+
         self._stats_btn = QPushButton("Generate Statistics")
         self._stats_btn.setStyleSheet("QPushButton { font-weight: bold; padding: 6px; }")
         t3.addWidget(self._stats_btn)
@@ -574,6 +630,8 @@ class SkinRemoverWidget(QWidget):
         self._viewer.layers.events.inserted.connect(self._refresh_layer_info)
         self._viewer.layers.events.removed.connect(self._refresh_layer_info)
         self._viewer.layers.selection.events.changed.connect(self._refresh_layer_info)
+        self._viewer.layers.events.inserted.connect(self._refresh_stats_layers)
+        self._viewer.layers.events.removed.connect(self._refresh_stats_layers)
         # Apply initial panel visibility
         self._on_stats_backend_changed()
 
@@ -640,6 +698,36 @@ class SkinRemoverWidget(QWidget):
             if isinstance(lyr, napari.layers.Image):
                 return lyr
         return None
+
+    def _refresh_stats_layers(self, *_):
+        """Repopulate image and shapes layer combos in the Statistics tab."""
+        # Image layers
+        cur_img = self._stats_image_combo.currentData()
+        self._stats_image_combo.blockSignals(True)
+        self._stats_image_combo.clear()
+        self._stats_image_combo.addItem("None", None)
+        for lyr in self._viewer.layers:
+            if isinstance(lyr, napari.layers.Image):
+                self._stats_image_combo.addItem(lyr.name, lyr.name)
+                if lyr.name == cur_img:
+                    self._stats_image_combo.setCurrentIndex(
+                        self._stats_image_combo.count() - 1
+                    )
+        self._stats_image_combo.blockSignals(False)
+
+        # Shapes layers
+        cur_shp = self._stats_shapes_combo.currentData()
+        self._stats_shapes_combo.blockSignals(True)
+        self._stats_shapes_combo.clear()
+        self._stats_shapes_combo.addItem("None", None)
+        for lyr in self._viewer.layers:
+            if isinstance(lyr, napari.layers.Shapes):
+                self._stats_shapes_combo.addItem(lyr.name, lyr.name)
+                if lyr.name == cur_shp:
+                    self._stats_shapes_combo.setCurrentIndex(
+                        self._stats_shapes_combo.count() - 1
+                    )
+        self._stats_shapes_combo.blockSignals(False)
 
     def _refresh_layer_info(self, *_):
         lyr = self._active_layer()
@@ -1098,6 +1186,29 @@ class SkinRemoverWidget(QWidget):
             # Persist model + URL but NOT the API key for security
             self._save_cfg(api_model=mo, api_url=url)
 
+        # Intensity image (optional)
+        image = None
+        img_name = self._stats_image_combo.currentData()
+        if img_name is not None and img_name in self._viewer.layers:
+            image = np.asarray(self._viewer.layers[img_name].data)
+
+        # Brain region lines (optional)
+        region_lines = None
+        region_names = None
+        shp_name = self._stats_shapes_combo.currentData()
+        if shp_name is not None and shp_name in self._viewer.layers:
+            shp_lyr = self._viewer.layers[shp_name]
+            region_lines = _extract_region_lines_um(shp_lyr)
+            if region_lines:
+                names_text = self._stats_region_names_edit.text().strip()
+                if names_text:
+                    region_names = [n.strip() for n in names_text.split(",") if n.strip()]
+                if not region_names:
+                    # Auto-generate names if user left field blank
+                    region_names = [f"Region {i+1}" for i in range(len(region_lines) + 1)]
+            else:
+                region_lines = None  # layer had no line shapes
+
         labels    = np.asarray(lyr.data)
         out_dir   = self._output_dir()
         stem      = self._state["last_file_path"].stem if self._state.get("last_file_path") else lyr.name
@@ -1110,7 +1221,13 @@ class SkinRemoverWidget(QWidget):
 
         def _worker():
             try:
-                df = compute_stats(labels, scale_zyx, backend_config=backend_config)
+                df = compute_stats(
+                    labels, scale_zyx,
+                    image=image,
+                    region_lines=region_lines,
+                    region_names=region_names,
+                    backend_config=backend_config,
+                )
                 result["df"] = df
             except Exception as exc:
                 traceback.print_exc()

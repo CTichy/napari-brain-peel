@@ -430,7 +430,7 @@ Labels are saved as `int32` TIFF. Each voxel value = label number (0 = backgroun
 
 ## 7. Tab 3 — Statistics
 
-This tab computes 25 morphological measurements for every label and saves them to a CSV file. It is intentionally separate from Tab 2 so there is room to configure the description backend comfortably before clicking Generate.
+This tab computes a comprehensive set of morphological, spatial, intensity, and brain-region measurements for every label and saves them to a CSV file. It is intentionally separate from Tab 2 so there is room to configure all options comfortably before clicking Generate.
 
 > Make sure a Labels layer is selected in napari before using this tab.
 
@@ -466,15 +466,58 @@ See Section 10 for detailed setup instructions for each backend.
 
 ---
 
+### Intensity statistics (optional)
+
+**Image layer** dropdown — select an Image layer from your napari session (or leave as "None" to skip).
+
+When an image layer is selected, three additional columns are computed per label using the raw intensity values inside each cell's mask:
+
+- `mean_intensity` — average pixel intensity inside the label
+- `integrated_intensity` — total sum of all pixel values (proportional to total fluorescent material)
+- `intensity_cv` — coefficient of variation (std / mean) — a measure of how uniform the signal is; 0 = perfectly uniform, high values = heterogeneous staining
+
+> Select the microglia channel (usually the green channel, ch1) for biologically meaningful results.
+
+---
+
+### Brain regions (optional)
+
+Assigns each cell to a named anatomical brain region and computes its distance to the nearest region boundary.
+
+**Boundary lines** dropdown — select a Shapes layer containing one or more `line` shapes, or leave as "None" to skip.
+
+**Region names** text field — enter the region names separated by commas, listed anterior to posterior. For N boundary lines, provide exactly N+1 names.
+
+Example: If you draw one line separating the optic tectum from the hindbrain, enter:
+```
+Optic tectum, Hindbrain
+```
+
+**How to draw region boundaries:**
+
+1. In the napari toolbar, click **New shapes layer** (or add via Layers → Add shapes layer).
+2. Select the **line** tool in the toolbar.
+3. Draw a line across the brain at the anatomical boundary — typically visible as a change in cell density. Draw left-to-right (anterior first).
+4. For multiple regions, draw one line per boundary.
+5. Select the Shapes layer in the **Boundary lines** dropdown and type your region names.
+
+The boundary lines are sorted automatically by their midpoint X-coordinate (left = anterior). Each cell centroid is tested against each boundary in order to determine which region it falls in.
+
+Two additional columns are added to the CSV:
+
+- `brain_region` — name of the region this cell belongs to
+- `region_boundary_dist_um` — distance in µm to the nearest region boundary line
+
+---
+
 ### Generate Statistics (button)
 
 Click to compute. Runs in a background thread. When complete:
 
 - A CSV file is saved to the output folder (see Section 8), named `{source_file_stem}_statistics.csv`.
-
 - The status line shows how many labels were processed.
 
-The CSV contains one row per label and 25 columns. See Section 9 for a full description of every column.
+The CSV contains one row per label with up to 45 columns depending on which optional features are enabled. See Section 9 for a full description of every column.
 
 
 ---
@@ -508,7 +551,7 @@ The folder is created the first time a file is saved. If no input file has been 
 
 ## 9. Statistics CSV — all columns explained
 
-The CSV produced by Generate Statistics has one row per label. Here is every column, in plain language:
+The CSV produced by Generate Statistics has one row per label, with up to 45 columns. The first 39 are always present; the remaining columns appear only when the corresponding optional feature is enabled.
 
 ---
 
@@ -577,20 +620,66 @@ The smallest rectangular box (aligned with the axes) that completely contains th
 | `extent` | float (0–1) | **Extent** = `volume / bounding_box_volume`. How much of the bounding box is actually filled. A cube = 1.0. A sphere ≈ 0.52. Highly branched cells = much lower. |
 | `surface_area_um2` | float (µm²) | **Surface area** in square micrometres, computed using marching cubes — a 3D mesh is generated from the label boundary and the triangle areas summed. A cell with long thin branches has a much larger surface area than a smooth sphere of the same volume. |
 | `sphericity` | float (0–1) | **Sphericity** = `π^(1/3) × (6V)^(2/3) / A` where V = volume and A = surface area. A perfect sphere = 1.0. Anything less than 1.0 is less spherical. Microglia: typically 0.3–0.8 depending on branch complexity. |
+| `surface_to_volume_ratio` | float (µm⁻¹) | **Surface-to-volume ratio** = surface_area / volume. Higher values indicate more complex, surface-rich morphology relative to cell size. Branches and protrusions increase this dramatically. |
 
 ---
 
 ### Skeleton (branching structure)
 
-These columns require the `skan` package. If `skan` is not installed, all three will be 0.
+These columns require the `skan` package. If `skan` is not installed, they will be 0.
 
-The algorithm skeletonizes the label (reduces it to a 1-voxel-wide skeleton) and then analyses the resulting graph of branches.
+The algorithm skeletonizes the label (reduces it to a 1-voxel-wide skeleton) and analyses the resulting graph of branches.
 
 | Column | Type | Description |
 |--------|------|-------------|
 | `n_branches` | integer | Number of skeleton branches. A sphere = 1 branch. A microglia with 4 protrusions = roughly 4–8 branches depending on how they connect. |
 | `n_endpoints` | integer | Number of free-end branch tips (branches that don't loop back). Corresponds roughly to the number of protrusion tips. |
-| `mean_branch_len_um` | float (µm) | Average length of all skeleton branches in micrometres. Longer values = longer protrusions or more extended cell body. |
+| `mean_branch_len_um` | float (µm) | Average path length of all skeleton branches in micrometres. |
+| `max_branch_len_um` | float (µm) | Length of the longest individual branch — an indicator of maximum protrusion reach. |
+| `branch_tortuosity` | float (≥1) | Average ratio of path length to straight-line distance per branch. A value of 1.0 = perfectly straight branches. Higher values = winding, curved protrusions. |
+| `branch_density` | float (per 10⁶ µm³) | Number of branches per million cubic micrometres of cell volume. Allows fair comparison between cells of different sizes. |
+| `endpoint_density` | float (per 10⁶ µm³) | Number of branch tips per million cubic micrometres. A proxy for protrusion count normalised by cell volume. |
+| `process_complexity` | float | Combined measure of branching complexity: `n_branches × mean_branch_len / eq_diam`. High values = many long branches relative to cell diameter. |
+
+---
+
+### Morphotype classification
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `morphotype` | string | Automatic shape classification based on elongation, sphericity, solidity, branch count, and surface-to-volume ratio. Categories: **Rod-shaped** (elongated, few branches), **Amoeboid** (round, compact, few branches), **Ramified** (many long branches, low sphericity), **Intermediate-ramified** (moderate branching), **Intermediate** (doesn't fit the above). |
+
+---
+
+### Spatial relationships
+
+These columns use all cell centroids together to compute neighbourhood statistics.
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `nearest_neighbor_dist_um` | float (µm) | Distance to the closest other cell centroid. Small values = cells are tightly packed; large values = isolated cells. |
+| `nearest_neighbor_ratio` | float | **Clark-Evans 3D index** for this cell: the ratio of its nearest-neighbour distance to the expected distance if cells were randomly distributed at the same density. Values < 1 = clustering; > 1 = regularity/dispersion. |
+| `local_density_100um` | float (cells/10⁶ µm³) | Number of other cells within a 100 µm radius sphere, normalised by sphere volume. A measure of local neighbourhood crowding. |
+| `depth_normalized` | float (0–1) | Z position normalised to the full depth range of all cells: 0 = shallowest cell, 1 = deepest. Useful for comparing dorsal vs. ventral distribution across samples. |
+
+---
+
+### Intensity statistics *(optional — requires Image layer selection)*
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `mean_intensity` | float | Mean pixel intensity inside the label mask. Reflects overall fluorescence brightness of the cell. |
+| `integrated_intensity` | float | Sum of all pixel values inside the label (mean × voxel count). Proportional to total fluorescent material in the cell regardless of size. |
+| `intensity_cv` | float (0–∞) | Coefficient of variation of pixel intensities = std / mean. 0 = perfectly uniform. High values = heterogeneous staining, possibly indicating internal structure or imaging artefacts. |
+
+---
+
+### Brain region assignment *(optional — requires Shapes layer with boundary lines)*
+
+| Column | Type | Description |
+|--------|------|-------------|
+| `brain_region` | string | Name of the anatomical region this cell belongs to (as defined by the boundary lines and region names you provided). |
+| `region_boundary_dist_um` | float (µm) | Distance from this cell's centroid to the nearest region boundary line, in micrometres. Cells near boundaries may have mixed characteristics. |
 
 ---
 
@@ -598,7 +687,7 @@ The algorithm skeletonizes the label (reduces it to a 1-voxel-wide skeleton) and
 
 | Column | Type | Description |
 |--------|------|-------------|
-| `description` | string | A plain-language sentence summarising the cell's shape, generated by the selected description backend. Example (rule-based): *"Label 3: Elongated along Y-axis (2.8:1), volume 4,521 µm³, centroid Z=87.3 Y=142.1 X=203.5 µm. Lobulated/irregular surface, sphericity 0.41, solidity 0.72. 6 branches, 4 endpoints (mean 8.3 µm)."* |
+| `description` | string | A plain-language sentence summarising the cell's shape, generated by the selected description backend. Example (rule-based): *"Label 3: Elongated along Y-axis (2.8:1), volume 4,521 µm³, centroid Z=87.3 Y=142.1 X=203.5 µm. Lobulated/irregular surface, sphericity 0.41, solidity 0.72. Morphotype: Intermediate-ramified. 6 branches, 4 endpoints (mean 8.3 µm), tortuosity 1.4."* |
 
 ---
 
@@ -819,8 +908,10 @@ Click **Save Labels**. A file dialog opens pre-filled with the output folder. Ac
 1. Click the **Statistics** tab (Tab 3).
 2. Make sure the Labels layer is selected in napari.
 3. Choose your description backend.
-4. Click **Generate Statistics**.
-5. The CSV is saved automatically to the output folder.
+4. *(Optional)* Select a fluorescence channel under **Intensity statistics** to add mean/integrated/CV columns.
+5. *(Optional)* Draw region boundary lines in a Shapes layer, then select it under **Brain regions** and enter the region names.
+6. Click **Generate Statistics**.
+7. The CSV is saved automatically to the output folder.
 
 ---
 
@@ -967,7 +1058,10 @@ The blob doesn't have a clear separation into the requested number of parts.
 | Control | Options | What it does |
 |---------|---------|--------------|
 | Description | Rule-based / Ollama / OpenAI / Claude | Engine for the description column |
-| Generate Statistics | — | Computes 25 metrics per label, saves CSV |
+| Image layer | Any Image layer / None | Adds intensity statistics (mean, integrated, CV) |
+| Boundary lines | Any Shapes layer / None | Assigns cells to named brain regions |
+| Region names | Comma-separated text | Names for each region (N lines → N+1 names) |
+| Generate Statistics | — | Computes up to 45 metrics per label, saves CSV |
 
 ---
 
