@@ -12,12 +12,13 @@
 4. [Opening the plugin in napari](#4-opening-the-plugin-in-napari)
 5. [Tab 1 — Skin Remover](#5-tab-1--skin-remover)
 6. [Tab 2 — Create Labels](#6-tab-2--create-labels)
-7. [Output files and folder structure](#7-output-files-and-folder-structure)
-8. [Statistics CSV — all columns explained](#8-statistics-csv--all-columns-explained)
-9. [Setting up description backends](#9-setting-up-description-backends)
-10. [Full workflow: from raw stack to labelled cells](#10-full-workflow-from-raw-stack-to-labelled-cells)
-11. [Reinstalling after an update](#11-reinstalling-after-an-update)
-12. [Troubleshooting](#12-troubleshooting)
+7. [Tab 3 — Statistics](#7-tab-3--statistics)
+8. [Output files and folder structure](#8-output-files-and-folder-structure)
+9. [Statistics CSV — all columns explained](#9-statistics-csv--all-columns-explained)
+10. [Setting up description backends](#10-setting-up-description-backends)
+11. [Full workflow: from raw stack to labelled cells](#11-full-workflow-from-raw-stack-to-labelled-cells)
+12. [Reinstalling after an update](#12-reinstalling-after-an-update)
+13. [Troubleshooting](#13-troubleshooting)
 
 ---
 
@@ -29,7 +30,9 @@ This plugin does two things, in order:
 
 **Step A — Skin Removal (Tab 1):** Uses a trained AI model (MONAI 3D U-Net) to automatically detect and remove everything outside the brain, producing a clean `brain_only` image where only the cells of interest remain visible.
 
-**Step B — Label and Analyse (Tab 2):** From the cleaned image, automatically finds and labels each individual cell (microglia or other stained type) as a separately numbered 3D region, lets you sort, split, and edit labels, then computes a comprehensive set of shape statistics for each cell and exports them to a CSV file.
+**Step B — Label (Tab 2):** From the cleaned image, automatically finds and labels each individual cell as a separately numbered 3D region. Lets you sort, split, and edit labels before saving.
+
+**Step C — Analyse (Tab 3):** Computes a comprehensive set of shape statistics for each labelled cell and exports them to a CSV file, with an optional AI-generated plain-language description per cell.
 
 ---
 
@@ -45,7 +48,7 @@ All dependencies (PyTorch, MONAI, scikit-image, etc.) are installed automaticall
 
 > **Mac with Apple Silicon (M1/M2/M3):** The plugin automatically uses your GPU via Metal (MPS). No extra steps needed.
 
-> **Windows / Linux with NVIDIA GPU:** CUDA is detected and used automatically. For the fastest statistics (GPU batch regionprops), `cupy-cuda12x` and `cucim` must be installed separately — see Section 12 for details.
+> **Windows / Linux with NVIDIA GPU:** CUDA is detected and used automatically. For the fastest statistics (GPU batch regionprops), `cupy-cuda12x` and `cucim` must be installed separately — see Section 13 for details.
 
 > **No GPU:** Works on CPU too, just slower (~30–60 minutes per stack for inference).
 
@@ -421,13 +424,19 @@ Labels are saved as `int32` TIFF. Each voxel value = label number (0 = backgroun
 
 > **Save Labels is separate from Create Labels by design.** This lets you edit labels in napari (split, delete, merge) before saving the final result.
 
+> After saving labels, switch to **Tab 3 — Statistics** to compute measurements for each cell.
+
 ---
 
-### Generate Statistics
+## 7. Tab 3 — Statistics
 
-Computes 25 morphological measurements for every label and saves them to a CSV file.
+This tab computes 25 morphological measurements for every label and saves them to a CSV file. It is intentionally separate from Tab 2 so there is room to configure the description backend comfortably before clicking Generate.
 
-#### Description backend
+> Make sure a Labels layer is selected in napari before using this tab.
+
+---
+
+### Description backend
 
 Selects the engine used to generate the plain-language `description` column in the CSV.
 
@@ -438,31 +447,39 @@ Selects the engine used to generate the plain-language `description` column in t
 | **OpenAI API (paid)** | Yes | Pay-per-token | GPT-4o-mini recommended for low cost |
 | **Claude API (paid)** | Yes | Pay-per-token | claude-haiku-4-5 recommended for low cost |
 
-See Section 9 for detailed setup instructions for each backend.
+See Section 10 for detailed setup instructions for each backend.
 
-#### Ollama sub-panel (shown when Ollama is selected)
+---
+
+### Ollama sub-panel (shown when Ollama is selected)
 
 - **Endpoint:** URL where Ollama is running. Default: `http://localhost:11434`. Change this if Ollama runs on a different machine or port.
 - **Model:** The Ollama model name to use (e.g. `llama3`, `mistral`, `phi3`). Must be pulled first (`ollama pull llama3`).
 
-#### API sub-panel (shown for OpenAI or Claude)
+---
+
+### API sub-panel (shown for OpenAI or Claude)
 
 - **API Key:** Your secret API key. Shown as dots (password field). **Not saved to disk** — you must re-enter it each session.
 - **Model:** The model identifier (e.g. `gpt-4o-mini` for OpenAI, `claude-haiku-4-5-20251001` for Claude).
 - **Base URL:** Optional. Leave blank unless you use an OpenAI-compatible proxy or self-hosted endpoint.
 
-#### Generate Statistics (button)
+---
+
+### Generate Statistics (button)
 
 Click to compute. Runs in a background thread. When complete:
 
-- A CSV file is saved to the output folder (see Section 7), named `{source_file_stem}_statistics.csv`.
+- A CSV file is saved to the output folder (see Section 8), named `{source_file_stem}_statistics.csv`.
+
 - The status line shows how many labels were processed.
 
-The CSV contains one row per label and 25 columns. See Section 8 for a full description of every column.
+The CSV contains one row per label and 25 columns. See Section 9 for a full description of every column.
+
 
 ---
 
-## 7. Output files and folder structure
+## 8. Output files and folder structure
 
 All files saved by the plugin go into a dedicated folder named after your original input file:
 
@@ -489,7 +506,7 @@ The folder is created the first time a file is saved. If no input file has been 
 
 ---
 
-## 8. Statistics CSV — all columns explained
+## 9. Statistics CSV — all columns explained
 
 The CSV produced by Generate Statistics has one row per label. Here is every column, in plain language:
 
@@ -585,7 +602,7 @@ The algorithm skeletonizes the label (reduces it to a 1-voxel-wide skeleton) and
 
 ---
 
-## 9. Setting up description backends
+## 10. Setting up description backends
 
 ### Rule-based (offline) — no setup needed
 
@@ -631,7 +648,7 @@ ollama list   # should show your downloaded models
 
 **Step 4 — Configure in the plugin**
 
-In Tab 2, under Generate Statistics:
+In **Tab 3 — Statistics**:
 
 1. Select **Ollama (local, free)** from the Description dropdown.
 2. **Endpoint:** leave as `http://localhost:11434` (default). Only change this if Ollama runs on a different machine on your network.
@@ -660,7 +677,7 @@ Go to [https://platform.openai.com](https://platform.openai.com) and sign up. Yo
 
 **Step 3 — Configure in the plugin**
 
-In Tab 2, under Generate Statistics:
+In **Tab 3 — Statistics**:
 
 1. Select **OpenAI API (paid)** from the Description dropdown.
 2. **API Key:** paste your `sk-...` key. It is stored only in memory — not saved to disk.
@@ -691,7 +708,7 @@ Go to [https://console.anthropic.com](https://console.anthropic.com) and sign up
 
 **Step 3 — Configure in the plugin**
 
-In Tab 2, under Generate Statistics:
+In **Tab 3 — Statistics**:
 
 1. Select **Claude API (paid)** from the Description dropdown.
 2. **API Key:** paste your `sk-ant-...` key.
@@ -703,7 +720,7 @@ In Tab 2, under Generate Statistics:
 
 ---
 
-## 10. Full workflow: from raw stack to labelled cells
+## 11. Full workflow: from raw stack to labelled cells
 
 ### Step 1 — Open your file
 
@@ -799,14 +816,15 @@ Click **Save Labels**. A file dialog opens pre-filled with the output folder. Ac
 
 ### Step 8 — Generate statistics
 
-1. Make sure the Labels layer is selected.
-2. Under **Generate Statistics**, choose your description backend.
-3. Click **Generate Statistics**.
-4. The CSV is saved automatically to the output folder.
+1. Click the **Statistics** tab (Tab 3).
+2. Make sure the Labels layer is selected in napari.
+3. Choose your description backend.
+4. Click **Generate Statistics**.
+5. The CSV is saved automatically to the output folder.
 
 ---
 
-## 11. Reinstalling after an update
+## 12. Reinstalling after an update
 
 ```bash
 pip uninstall napari-skin-remover -y
@@ -819,7 +837,7 @@ Then **fully close and reopen napari**. If napari is running when you reinstall,
 
 ---
 
-## 12. Troubleshooting
+## 13. Troubleshooting
 
 ### The plugin does not appear in Plugins menu
 
@@ -943,6 +961,13 @@ The blob doesn't have a clear separation into the requested number of parts.
 | Min volume | 7500 | Minimum voxels to keep a 3D object |
 | Split σ | 1.0 | Smoothness for watershed split |
 | Min distance | 5 | Peak separation for split detection |
+
+### Tab 3 — Statistics
+
+| Control | Options | What it does |
+|---------|---------|--------------|
+| Description | Rule-based / Ollama / OpenAI / Claude | Engine for the description column |
+| Generate Statistics | — | Computes 25 metrics per label, saves CSV |
 
 ---
 
