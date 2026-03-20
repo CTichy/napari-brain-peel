@@ -499,12 +499,12 @@ Optic tectum, Hindbrain
 **How to draw region boundaries:**
 
 1. In the napari toolbar, click **New shapes layer** (or add via Layers → Add shapes layer).
-2. Select the **line** tool in the toolbar.
-3. Draw a line across the brain at the anatomical boundary — typically visible as a change in cell density. Draw left-to-right (anterior first).
-4. For multiple regions, draw one line per boundary.
+2. Select the **path** tool in the toolbar (a polyline — click once per vertex, double-click to finish). Use **path** rather than **line** so you can follow the curved anatomy of the optic tectum / hindbrain boundary.
+3. Click along the boundary curve from the dorsal edge to the ventral edge, following the anatomical contour. Draw from **left to right** (anterior side first). Double-click on the last point to finish the path.
+4. For multiple regions, draw one path per boundary.
 5. Select the Shapes layer in the **Boundary lines** dropdown and type your region names.
 
-The boundary lines are sorted automatically by their midpoint X-coordinate (left = anterior). Each cell centroid is tested against each boundary in order to determine which region it falls in.
+The boundaries are sorted automatically by mean X position of their vertices (left = anterior). For each cell, the plugin finds the nearest segment on the boundary curve and uses that segment's orientation to determine which side the cell falls on.
 
 Two additional columns are added to the CSV:
 
@@ -930,13 +930,13 @@ This lets you label each cell as belonging to the **optic tectum**, the **hindbr
 
 2. **Add a Shapes layer:** In napari, click the **+** icon in the toolbar and choose **Shapes**, or go to **Layers → Add shapes layer**.
 
-3. **Select the line tool:** In the shapes toolbar (appears when the Shapes layer is active), click the **line** icon.
+3. **Select the path tool:** In the shapes toolbar (appears when the Shapes layer is active), click the **path** icon (a polyline). Do **not** use the straight line tool — the optic tectum / hindbrain boundary is curved and needs multiple vertices.
 
-4. **Draw the boundary line:** Click once at the dorsal edge of the brain (top of the image) and once at the ventral edge (bottom) at the point where the optic tectum meets the hindbrain. Draw from **left to right** (anterior side left). The line does not need to span the entire brain — just enough to indicate the boundary direction.
+4. **Draw the boundary curve:** Starting at the dorsal edge of the brain (top of the image), click along the curved boundary, following the anatomical contour. Work from **left to right** (anterior side on the left). Double-click on the last point to finish. You typically need 4–10 click points to trace the boundary accurately.
 
-   > Tip: if unsure of the exact position, draw the line slightly inside the optic tectum (more anterior). You can always adjust and re-run statistics.
+   > Tip: zoom in on a mid-Z slice where the boundary is clearest. If unsure of the exact position, place the curve slightly inside the optic tectum (more anterior). You can always delete the path (select it, press Delete) and redraw it, then re-run statistics.
 
-5. *(For three or more regions)* Add more lines for each additional boundary, always drawing left → right (anterior → posterior order).
+5. *(For three or more regions)* Add more paths for each additional boundary, always drawing left → right (anterior → posterior order).
 
 6. **Switch to Tab 3 — Statistics** in the plugin.
 

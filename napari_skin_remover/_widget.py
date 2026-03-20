@@ -64,14 +64,22 @@ def _sep():
 
 
 def _extract_region_lines_um(shapes_lyr):
-    """Extract 'line' shapes from a Shapes layer as (2, 2) YX arrays in µm."""
+    """
+    Extract boundary curves from a Shapes layer as (M, 2) YX arrays in µm.
+
+    Accepted shape types:
+      - 'line'  — 2-point straight line
+      - 'path'  — multi-point polyline (any number of vertices)
+
+    Each returned array has shape (M, 2) where M >= 2 and columns are [Y, X].
+    """
     scale = np.array(shapes_lyr.scale)
     lines = []
     for data, stype in zip(shapes_lyr.data, shapes_lyr.shape_type):
-        if stype != "line":
+        if stype not in ("line", "path"):
             continue
-        pts = np.array(data) * scale   # (2, ndim)
-        lines.append(pts[:, -2:])      # last 2 dims = YX → shape (2, 2)
+        pts = np.array(data) * scale   # (M, ndim)
+        lines.append(pts[:, -2:])      # last 2 dims = YX → shape (M, 2)
     return lines
 
 

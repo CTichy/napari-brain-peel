@@ -263,22 +263,61 @@ def _spatial_stats(centroids_zyx_um: np.ndarray) -> dict:
 
 # ── Post-assembly: brain region assignment ───────────────────────────────────
 
+def _polyline_side_and_dist(cy: float, cx: float, pts: np.ndarray):
+    """
+    Given a point (cy, cx) and a polyline defined by pts (M, 2) in [Y, X] order,
+    return (side, dist) where:
+      side  — +1 if the point is left of the nearest segment, -1 if right
+      dist  — minimum distance from the point to any segment of the polyline
+
+    'Right of segment' means the cross-product at the nearest segment is negative
+    (when the segment runs left→right, i.e. anterior→posterior).
+    """
+    best_dist = float("inf")
+    best_cross_sign = 1  # default: left side (more anterior)
+
+    for i in range(len(pts) - 1):
+        ay, ax = float(pts[i][0]),   float(pts[i][1])
+        by, bx = float(pts[i+1][0]), float(pts[i+1][1])
+        dy_seg, dx_seg = by - ay, bx - ax
+        denom = dx_seg * dx_seg + dy_seg * dy_seg
+        if denom < 1e-12:
+            t = 0.0
+        else:
+            t = max(0.0, min(1.0,
+                ((cx - ax) * dx_seg + (cy - ay) * dy_seg) / denom))
+        py = ay + t * dy_seg
+        px = ax + t * dx_seg
+        d = math.sqrt((cx - px) ** 2 + (cy - py) ** 2)
+        if d < best_dist:
+            best_dist = d
+            # Cross product at the closest segment
+            cross = dx_seg * (cy - ay) - dy_seg * (cx - ax)
+            best_cross_sign = -1 if cross < 0 else 1
+
+    return best_cross_sign, best_dist
+
+
 def _assign_brain_regions(
     centroids_yx_um: np.ndarray,
     region_lines_um: list,
     region_names: list,
 ) -> tuple[list, list]:
     """
-    Classify each centroid into a named brain region using dividing lines.
+    Classify each centroid into a named brain region using dividing curves.
 
-    Lines are sorted by midpoint-X (ascending = anterior). For each centroid,
-    region_index = number of lines it lies to the right of (cross-product sign).
-    Draw each line top→bottom so that "left of line" = more anterior.
+    Each boundary may be a 2-point straight line OR a multi-point polyline
+    (both represented as (M, 2) arrays of [Y, X] in µm). Boundaries are
+    sorted by mean X of their vertices (ascending = anterior first).
+
+    For each centroid, the region index equals the number of boundaries for
+    which the centroid lies to the right of (i.e. more posterior than) the
+    nearest segment on that boundary.
 
     Parameters
     ----------
     centroids_yx_um  : (N, 2) array of (y_um, x_um)
-    region_lines_um  : list of (2, 2) arrays [[y0,x0],[y1,x1]] in µm
+    region_lines_um  : list of (M, 2) arrays, M >= 2, in µm
     region_names     : list of strings, length = len(region_lines_um) + 1
 
     Returns
@@ -289,10 +328,10 @@ def _assign_brain_regions(
         N = len(centroids_yx_um)
         return [""] * N, [0.0] * N
 
-    # Sort lines by midpoint X (ascending = anterior first)
+    # Sort boundaries by mean X of all vertices (ascending = anterior first)
     lines_sorted = sorted(
         region_lines_um,
-        key=lambda ln: float(ln[0][1] + ln[1][1]) / 2.0,
+        key=lambda ln: float(np.mean(ln[:, 1])),
     )
 
     n_regions = len(lines_sorted) + 1
@@ -304,30 +343,14 @@ def _assign_brain_regions(
     result_dists   = []
 
     for cy, cx in centroids_yx_um:
-        # Count how many lines the point is to the right of
-        idx = 0
-        for ln in lines_sorted:
-            ay, ax = float(ln[0][0]), float(ln[0][1])
-            by, bx = float(ln[1][0]), float(ln[1][1])
-            # Cross product z-component; negative → point is right of line
-            cross = (bx - ax) * (cy - ay) - (by - ay) * (cx - ax)
-            if cross < 0:
-                idx += 1
-        result_regions.append(names[min(idx, n_regions - 1)])
-
-        # Distance to nearest boundary (point-to-segment)
+        idx      = 0
         min_dist = float("inf")
-        for ln in lines_sorted:
-            ay, ax = float(ln[0][0]), float(ln[0][1])
-            by, bx = float(ln[1][0]), float(ln[1][1])
-            dx, dy = bx - ax, by - ay
-            denom  = dx * dx + dy * dy
-            if denom < 1e-12:
-                d = math.sqrt((cx - ax) ** 2 + (cy - ay) ** 2)
-            else:
-                t = max(0.0, min(1.0, ((cx - ax) * dx + (cy - ay) * dy) / denom))
-                d = math.sqrt((cx - (ax + t * dx)) ** 2 + (cy - (ay + t * dy)) ** 2)
+        for pts in lines_sorted:
+            side, d = _polyline_side_and_dist(cy, cx, pts)
+            if side < 0:   # point is right of (more posterior than) this boundary
+                idx += 1
             min_dist = min(min_dist, d)
+        result_regions.append(names[min(idx, n_regions - 1)])
         result_dists.append(float(min_dist))
 
     return result_regions, result_dists
