@@ -496,15 +496,19 @@ Example: If you draw one line separating the optic tectum from the hindbrain, en
 Optic tectum, Hindbrain
 ```
 
+**Fish orientation and axis convention:**
+
+In these stacks, the fish lies along the **X axis** with the head pointing toward X = 0 (anterior = small X, posterior = large X). Y runs from 0 to 2048 top-to-bottom. The optic tectum / hindbrain boundary therefore runs roughly **top to bottom along Y**, separating the left part of the image (optic tectum, small X) from the right part (hindbrain, large X).
+
 **How to draw region boundaries:**
 
 1. In the napari toolbar, click **New shapes layer** (or add via Layers → Add shapes layer).
 2. Select the **path** tool in the toolbar (a polyline — click once per vertex, double-click to finish). Use **path** rather than **line** so you can follow the curved anatomy of the optic tectum / hindbrain boundary.
-3. Click along the boundary curve from the dorsal edge to the ventral edge, following the anatomical contour. Draw from **left to right** (anterior side first). Double-click on the last point to finish the path.
-4. For multiple regions, draw one path per boundary.
+3. Click along the boundary curve **from top to bottom** (Y = 0 toward Y = max), following the anatomical contour. The optic tectum will be on the left of your drawn path (smaller X), the hindbrain on the right (larger X). Double-click on the last point to finish.
+4. For multiple regions, draw one path per boundary, each running top to bottom.
 5. Select the Shapes layer in the **Boundary lines** dropdown and type your region names.
 
-The boundaries are sorted automatically by mean X position of their vertices (left = anterior). For each cell, the plugin finds the nearest segment on the boundary curve and uses that segment's orientation to determine which side the cell falls on.
+The boundaries are sorted automatically by mean X position of their vertices (leftmost = most anterior). For each cell, the plugin finds the nearest segment on the boundary curve and uses its orientation to determine which side the cell falls on (left = more anterior region, right = more posterior region).
 
 Two additional columns are added to the CSV:
 
@@ -922,21 +926,24 @@ Click **Save Labels**. A file dialog opens pre-filled with the output folder. Ac
 
 This lets you label each cell as belonging to the **optic tectum**, the **hindbrain**, or any other anatomical region you define by drawing a dividing line across the image.
 
-**What you need:** A rough idea of where the optic tectum ends and the hindbrain begins in your stack. The boundary is visible as a change in cell distribution and can usually be identified by scrolling through Z slices — look for a denser band of cells or a clear anatomical gap.
+**Orientation reminder:** The fish lies along the **X axis** — head at X = 0, tail at X = max. Y runs top to bottom (0 → 2048). The optic tectum / hindbrain boundary therefore appears as a roughly vertical curve when you look at the XY plane — it runs from the top of the brain (small Y) to the bottom (large Y), at some X position. Everything to the **left** of the curve (smaller X) is the optic tectum; everything to the **right** (larger X) is the hindbrain.
 
 **Step-by-step:**
 
-1. **Scroll to a representative Z slice** where the optic tectum / hindbrain boundary is visible. In zebrafish 4dpf, this boundary typically appears roughly at the midpoint of the anterior–posterior axis in the XY view.
+1. **Scroll to a representative Z slice** where the optic tectum / hindbrain boundary is most clearly visible. In zebrafish 4dpf, this boundary is typically a recognisable change in cell density roughly at the mid-point of the anterior–posterior (X) axis.
 
 2. **Add a Shapes layer:** In napari, click the **+** icon in the toolbar and choose **Shapes**, or go to **Layers → Add shapes layer**.
 
-3. **Select the path tool:** In the shapes toolbar (appears when the Shapes layer is active), click the **path** icon (a polyline). Do **not** use the straight line tool — the optic tectum / hindbrain boundary is curved and needs multiple vertices.
+3. **Select the path tool:** In the shapes toolbar (appears when the Shapes layer is active), click the **path** icon (a polyline with multiple vertices). Do **not** use the straight line tool — the optic tectum / hindbrain boundary is curved.
 
-4. **Draw the boundary curve:** Starting at the dorsal edge of the brain (top of the image), click along the curved boundary, following the anatomical contour. Work from **left to right** (anterior side on the left). Double-click on the last point to finish. You typically need 4–10 click points to trace the boundary accurately.
+4. **Draw the boundary curve from top to bottom:** Start clicking at the top of the brain (small Y, Y ≈ 0 side) and work downward to the bottom of the brain (large Y). Follow the curved anatomical boundary as you click. Double-click on the last point to finish. You typically need 4–10 click points.
 
-   > Tip: zoom in on a mid-Z slice where the boundary is clearest. If unsure of the exact position, place the curve slightly inside the optic tectum (more anterior). You can always delete the path (select it, press Delete) and redraw it, then re-run statistics.
+   - The optic tectum (anterior, smaller X) will be on the **left** of your drawn path.
+   - The hindbrain (posterior, larger X) will be on the **right**.
 
-5. *(For three or more regions)* Add more paths for each additional boundary, always drawing left → right (anterior → posterior order).
+   > Tip: zoom in on the XY view where the boundary is clearest. If unsure of the exact position, trace the curve slightly anterior (more to the left). You can always select the path layer, press Delete to remove it, and redraw.
+
+5. *(For three or more regions)* Draw one additional path per boundary, each running top to bottom.
 
 6. **Switch to Tab 3 — Statistics** in the plugin.
 

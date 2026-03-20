@@ -306,13 +306,20 @@ def _assign_brain_regions(
     """
     Classify each centroid into a named brain region using dividing curves.
 
+    Expected fish / image orientation
+    ----------------------------------
+    The fish lies along the X axis: head at X=0 (anterior), tail at X=max
+    (posterior). Y runs top to bottom (0 → max). Each boundary curve should
+    be drawn top→bottom (increasing Y), so that the anterior region (smaller X)
+    is to the LEFT of the path and the posterior region (larger X) is to the RIGHT.
+
     Each boundary may be a 2-point straight line OR a multi-point polyline
     (both represented as (M, 2) arrays of [Y, X] in µm). Boundaries are
-    sorted by mean X of their vertices (ascending = anterior first).
+    sorted by mean X of their vertices (ascending = most anterior first).
 
-    For each centroid, the region index equals the number of boundaries for
-    which the centroid lies to the right of (i.e. more posterior than) the
-    nearest segment on that boundary.
+    For each centroid, region_index = number of boundaries whose nearest
+    segment has the centroid on its right side (cross-product < 0 = more
+    posterior / larger X).
 
     Parameters
     ----------
