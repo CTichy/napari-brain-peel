@@ -55,7 +55,8 @@ _STATS_COLUMNS = [
     ("n_branches",              "n_branches",                                    True),
     ("n_endpoints",             "n_endpoints",                                   True),
     ("mean_branch_len_um",      "mean_branch_len_um  (µm)",                      True),
-    ("nearest_neighbor_dist_um","nearest_neighbor_dist_um  (µm)",                True),
+    ("nn_1st",                  "nearest_neighbor 1st  (label + dist µm)",       True),
+    ("nn_2nd",                  "nearest_neighbor 2nd  (label + dist µm)",       False),
     ("local_density_100um",     "local_density_100um",                           True),
     # ── default OFF ──────────────────────────────────────────────────────────
     ("eq_diam_um",              "eq_diam_um  (equiv. sphere diam.)",             False),
@@ -88,6 +89,8 @@ _COL_GROUPS = {
     "bbox_vox":     ["bbox_z0_vox", "bbox_y0_vox", "bbox_x0_vox",
                      "bbox_z1_vox", "bbox_y1_vox", "bbox_x1_vox"],
     "bbox_um":      ["bbox_dz_um", "bbox_dy_um", "bbox_dx_um"],
+    "nn_1st":       ["nearest_neighbor_label",   "nearest_neighbor_dist_um"],
+    "nn_2nd":       ["nearest_neighbor_2_label", "nearest_neighbor_2_dist_um"],
 }
 
 

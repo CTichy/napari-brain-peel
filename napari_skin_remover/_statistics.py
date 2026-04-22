@@ -209,12 +209,13 @@ def _intensity_stats_worker(args: tuple) -> tuple:
 
 # ── Post-assembly: spatial statistics ────────────────────────────────────────
 
-def _spatial_stats(centroids_zyx_um: np.ndarray) -> dict:
+def _spatial_stats(centroids_zyx_um: np.ndarray, label_ids: np.ndarray) -> dict:
     """
     Compute NND, Clark-Evans 3-D ratio, local density, and normalised depth
     for all centroids at once.
 
     centroids_zyx_um : (N, 3) array of (z, y, x) in µm
+    label_ids        : (N,) array of integer label IDs (same order)
     """
     from scipy.spatial import cKDTree
 
@@ -223,17 +224,26 @@ def _spatial_stats(centroids_zyx_um: np.ndarray) -> dict:
 
     if N < 2:
         return {
-            "nearest_neighbor_dist_um": np.zeros(N),
-            "nearest_neighbor_ratio":   np.ones(N),
-            "local_density_100um":      np.zeros(N, dtype=int),
-            "depth_normalized":         np.zeros(N),
+            "nearest_neighbor_label":     label_ids.copy(),
+            "nearest_neighbor_dist_um":   np.zeros(N),
+            "nearest_neighbor_2_label":   label_ids.copy(),
+            "nearest_neighbor_2_dist_um": np.zeros(N),
+            "nearest_neighbor_ratio":     np.ones(N),
+            "local_density_100um":        np.zeros(N, dtype=int),
+            "depth_normalized":           np.zeros(N),
         }
 
     tree = cKDTree(pts)
 
-    # Nearest-neighbour distance (k=2: first hit is self)
-    dists, _ = tree.query(pts, k=2)
-    nnd = dists[:, 1]
+    # k=3: self + 1st NN + 2nd NN (use min(N,3) to handle N==2 safely)
+    k       = min(N, 3)
+    dists, idxs = tree.query(pts, k=k)
+    nnd      = dists[:, 1]
+    nn_lbls  = label_ids[idxs[:, 1]]
+    # 2nd nearest neighbour (falls back to 1st if only 2 cells total)
+    nn2_col  = 2 if k == 3 else 1
+    nnd2     = dists[:, nn2_col]
+    nn2_lbls = label_ids[idxs[:, nn2_col]]
 
     # Clark-Evans 3-D index: E[NND] = Γ(4/3) · (3 / (4π·ρ))^(1/3)
     bbox_vol  = float(np.prod(pts.max(axis=0) - pts.min(axis=0) + 1e-10))
@@ -256,10 +266,13 @@ def _spatial_stats(centroids_zyx_um: np.ndarray) -> dict:
     depth_norm = np.clip(pts[:, 0] / z_max, 0.0, 1.0) if z_max > 0 else np.zeros(N)
 
     return {
-        "nearest_neighbor_dist_um": nnd,
-        "nearest_neighbor_ratio":   nnd_ratio,
-        "local_density_100um":      local_density,
-        "depth_normalized":         depth_norm,
+        "nearest_neighbor_label":     nn_lbls,
+        "nearest_neighbor_dist_um":   nnd,
+        "nearest_neighbor_2_label":   nn2_lbls,
+        "nearest_neighbor_2_dist_um": nnd2,
+        "nearest_neighbor_ratio":     nnd_ratio,
+        "local_density_100um":        local_density,
+        "depth_normalized":           depth_norm,
     }
 
 
@@ -720,11 +733,15 @@ def compute_stats(
     # ── Post-assembly: spatial statistics ─────────────────────────────────
     print(f"   Spatial statistics...")
     centroids_zyx = df[["centroid_z_um", "centroid_y_um", "centroid_x_um"]].values
-    sp = _spatial_stats(centroids_zyx)
-    df["nearest_neighbor_dist_um"] = np.round(sp["nearest_neighbor_dist_um"], 2)
-    df["nearest_neighbor_ratio"]   = np.round(sp["nearest_neighbor_ratio"],   4)
-    df["local_density_100um"]      = sp["local_density_100um"]
-    df["depth_normalized"]         = np.round(sp["depth_normalized"],         4)
+    label_ids     = df["label"].values.astype(int)
+    sp = _spatial_stats(centroids_zyx, label_ids)
+    df["nearest_neighbor_label"]     = sp["nearest_neighbor_label"]
+    df["nearest_neighbor_dist_um"]   = np.round(sp["nearest_neighbor_dist_um"],   2)
+    df["nearest_neighbor_2_label"]   = sp["nearest_neighbor_2_label"]
+    df["nearest_neighbor_2_dist_um"] = np.round(sp["nearest_neighbor_2_dist_um"], 2)
+    df["nearest_neighbor_ratio"]     = np.round(sp["nearest_neighbor_ratio"],     4)
+    df["local_density_100um"]        = sp["local_density_100um"]
+    df["depth_normalized"]           = np.round(sp["depth_normalized"],           4)
 
     # ── Post-assembly: brain region assignment ────────────────────────────
     if has_regions:
