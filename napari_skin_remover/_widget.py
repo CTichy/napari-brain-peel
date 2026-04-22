@@ -43,12 +43,8 @@ _STATS_COLUMNS = [
     ("label",                   "label  (identifier)",                           True),
     ("volume_vox",              "volume_vox  (voxels)",                          True),
     ("volume_um3",              "volume_um3  (µm³)",                             True),
-    ("centroid_z_vox",          "centroid_z_vox",                                True),
-    ("centroid_y_vox",          "centroid_y_vox",                                True),
-    ("centroid_x_vox",          "centroid_x_vox",                                True),
-    ("centroid_z_um",           "centroid_z_um  (µm)",                           True),
-    ("centroid_y_um",           "centroid_y_um  (µm)",                           True),
-    ("centroid_x_um",           "centroid_x_um  (µm)",                           True),
+    ("centroid_vox",            "centroid_vox  (z/y/x, voxels)",                 True),
+    ("centroid_um",             "centroid_um  (z/y/x, µm)",                      True),
     ("sphericity",              "sphericity",                                     True),
     ("solidity",                "solidity",                                       True),
     ("elongation",              "elongation",                                     True),
@@ -87,9 +83,11 @@ _STATS_COLUMNS = [
 
 # Group keys that expand to multiple DataFrame columns when selected
 _COL_GROUPS = {
-    "bbox_vox": ["bbox_z0_vox", "bbox_y0_vox", "bbox_x0_vox",
-                 "bbox_z1_vox", "bbox_y1_vox", "bbox_x1_vox"],
-    "bbox_um":  ["bbox_dz_um", "bbox_dy_um", "bbox_dx_um"],
+    "centroid_vox": ["centroid_z_vox", "centroid_y_vox", "centroid_x_vox"],
+    "centroid_um":  ["centroid_z_um",  "centroid_y_um",  "centroid_x_um"],
+    "bbox_vox":     ["bbox_z0_vox", "bbox_y0_vox", "bbox_x0_vox",
+                     "bbox_z1_vox", "bbox_y1_vox", "bbox_x1_vox"],
+    "bbox_um":      ["bbox_dz_um", "bbox_dy_um", "bbox_dx_um"],
 }
 
 
