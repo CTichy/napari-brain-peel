@@ -32,6 +32,15 @@ from scipy.ndimage import (
     binary_fill_holes as cpu_fill_holes,
 )
 
+# torchvision must be fully initialised in the main thread before any worker
+# thread imports cellpose (which chains through segment_anything → torchvision).
+# Importing here at module load time (napari startup) prevents the circular
+# import that occurs when the import is triggered from a background thread.
+try:
+    import torchvision  # noqa: F401
+except Exception:
+    pass
+
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Backend detection  (run once at import time)
@@ -743,7 +752,6 @@ def create_labels_cellpose(
     (Z, Y, X) int32 ndarray — 0=background, 1..N=objects (1=largest)
     """
     try:
-        import torchvision  # must be fully initialised before segment_anything imports it
         from cellpose import models as _cp_models
     except ImportError:
         raise ImportError(
