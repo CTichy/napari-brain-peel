@@ -22,7 +22,7 @@ from qtpy.QtCore import Qt, QTimer
 from ._io import load_file
 from ._inference import DEFAULT_MODEL, _SKIN_SEG_DIR, run_inference
 from ._background import remove_outside_brain, remove_global, fill_outside_brain_random
-from ._labeling import create_labels, resort_labels, split_label
+from ._labeling import create_labels, create_labels_cellpose, resort_labels, split_label
 from ._statistics import compute_stats
 
 _CONFIG_PATH = Path.home() / ".config" / "napari-skin-remover" / "config.json"
@@ -346,6 +346,58 @@ class SkinRemoverWidget(QWidget):
 
         t2.addWidget(_sep())
 
+        # ── Mode selector ──────────────────────────────────────────────────
+        mode_row = QHBoxLayout()
+        mode_row.addWidget(QLabel("Mode:"))
+        self._labels_mode_combo = QComboBox()
+        self._labels_mode_combo.addItem("Standard",     "standard")
+        self._labels_mode_combo.addItem("Cellpose-SAM", "cellpose")
+        _t2_cfg = self._state.get("config", {})
+        _saved_mode = _t2_cfg.get("labels_mode", "standard")
+        _mode_idx = self._labels_mode_combo.findData(_saved_mode)
+        if _mode_idx >= 0:
+            self._labels_mode_combo.setCurrentIndex(_mode_idx)
+        mode_row.addWidget(self._labels_mode_combo)
+        mode_row.addStretch()
+        t2.addLayout(mode_row)
+
+        # ── Cellpose-SAM options (shown only when Cellpose-SAM selected) ───
+        self._cellpose_opts = QWidget()
+        _cp_layout = QVBoxLayout()
+        _cp_layout.setContentsMargins(0, 2, 0, 2)
+        _cp_layout.setSpacing(4)
+
+        _cp_path_row = QHBoxLayout()
+        _cp_path_row.addWidget(QLabel("Model:"))
+        self._cellpose_model_edit = QLineEdit()
+        self._cellpose_model_edit.setPlaceholderText("path to checkpoint …")
+        self._cellpose_model_edit.setText(_t2_cfg.get("cellpose_model_path", ""))
+        _cp_path_row.addWidget(self._cellpose_model_edit, stretch=1)
+        self._cellpose_model_browse_btn = QPushButton("Browse")
+        self._cellpose_model_browse_btn.setFixedWidth(60)
+        _cp_path_row.addWidget(self._cellpose_model_browse_btn)
+        _cp_layout.addLayout(_cp_path_row)
+
+        _cp_diam_row = QHBoxLayout()
+        _cp_diam_row.addWidget(QLabel("Diameter (px):"))
+        self._cellpose_diam_spin = QSpinBox()
+        self._cellpose_diam_spin.setMinimum(0)
+        self._cellpose_diam_spin.setMaximum(500)
+        self._cellpose_diam_spin.setValue(0)
+        self._cellpose_diam_spin.setSpecialValueText("auto")
+        _cp_diam_row.addWidget(self._cellpose_diam_spin)
+        _cp_diam_row.addStretch()
+        _cp_layout.addLayout(_cp_diam_row)
+
+        self._cellpose_opts.setLayout(_cp_layout)
+        t2.addWidget(self._cellpose_opts)
+
+        # ── Standard-only options: σ sliders (hidden in Cellpose-SAM mode) ─
+        self._standard_sigma_opts = QWidget()
+        _sig_layout = QVBoxLayout()
+        _sig_layout.setContentsMargins(0, 2, 0, 2)
+        _sig_layout.setSpacing(4)
+
         sxy_row = QHBoxLayout()
         sxy_row.addWidget(QLabel("Smooth σ XY:"))
         self._sxy_slider = QSlider(Qt.Horizontal)
@@ -356,7 +408,7 @@ class SkinRemoverWidget(QWidget):
         self._sxy_val.setFixedWidth(28)
         sxy_row.addWidget(self._sxy_slider)
         sxy_row.addWidget(self._sxy_val)
-        t2.addLayout(sxy_row)
+        _sig_layout.addLayout(sxy_row)
 
         sz_row = QHBoxLayout()
         sz_row.addWidget(QLabel("Smooth σ Z:"))
@@ -368,8 +420,12 @@ class SkinRemoverWidget(QWidget):
         self._sz_val.setFixedWidth(28)
         sz_row.addWidget(self._sz_slider)
         sz_row.addWidget(self._sz_val)
-        t2.addLayout(sz_row)
+        _sig_layout.addLayout(sz_row)
 
+        self._standard_sigma_opts.setLayout(_sig_layout)
+        t2.addWidget(self._standard_sigma_opts)
+
+        # ── Shared options (both modes) ────────────────────────────────────
         ovlp_row = QHBoxLayout()
         ovlp_row.addWidget(QLabel("Min overlap (%):"))
         self._ovlp_slider = QSlider(Qt.Horizontal)
@@ -728,6 +784,8 @@ class SkinRemoverWidget(QWidget):
             lambda v: self._area_val.setText(f"{v:,}")
         )
         self._labels_btn.clicked.connect(self._on_create_labels)
+        self._labels_mode_combo.currentIndexChanged.connect(self._on_labels_mode_changed)
+        self._cellpose_model_browse_btn.clicked.connect(self._on_browse_cellpose_model)
         self._resort_btn.clicked.connect(self._on_resort_labels)
         self._split_sigma_slider.valueChanged.connect(
             lambda v: self._split_sigma_val.setText(f"{v/10:.1f}")
@@ -747,6 +805,7 @@ class SkinRemoverWidget(QWidget):
         self._viewer.layers.events.removed.connect(self._refresh_stats_layers)
         # Apply initial panel visibility
         self._on_stats_backend_changed()
+        self._on_labels_mode_changed()
 
     # ------------------------------------------------------------------ #
     # Helpers
@@ -966,6 +1025,22 @@ class SkinRemoverWidget(QWidget):
         self._model_lbl.setText(path_str)
         self._save_cfg(model_path=str(p))
         self._status(f"Model: {p.name}")
+
+    def _on_labels_mode_changed(self, *_):
+        mode = self._labels_mode_combo.currentData()
+        self._cellpose_opts.setVisible(mode == "cellpose")
+        self._standard_sigma_opts.setVisible(mode == "standard")
+
+    def _on_browse_cellpose_model(self):
+        path_str, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Cellpose checkpoint",
+            str(Path.home()),
+            "All files (*)",
+        )
+        if not path_str:
+            return
+        self._cellpose_model_edit.setText(path_str)
 
     def _on_run(self):
         if not self._state["model_path"] or not Path(self._state["model_path"]).exists():
@@ -1416,6 +1491,7 @@ class SkinRemoverWidget(QWidget):
             )
             return
 
+        mode            = self._labels_mode_combo.currentData()
         sigma_xy        = self._sxy_slider.value()  / 10.0
         sigma_z         = self._sz_slider.value()   / 10.0
         min_overlap_pct = float(self._ovlp_slider.value())
@@ -1423,25 +1499,56 @@ class SkinRemoverWidget(QWidget):
         stem            = target.name
         scale           = tuple(float(v) for v in target.scale) if len(target.scale) == 3 else (1., 1., 1.)
 
+        # Validate Cellpose mode before starting thread
+        if mode == "cellpose":
+            model_path = self._cellpose_model_edit.text().strip()
+            if not model_path:
+                self._labels_status_lbl.setText(
+                    "No model selected. Browse to a Cellpose checkpoint first."
+                )
+                return
+            self._save_cfg(
+                labels_mode="cellpose",
+                cellpose_model_path=model_path,
+            )
+            diameter = float(self._cellpose_diam_spin.value())
+        else:
+            model_path = None
+            diameter   = 0.0
+            self._save_cfg(labels_mode="standard")
+
         self._labels_btn.setEnabled(False)
         self._labels_status_lbl.setText("Running...")
 
         print(f"\n{'='*70}")
-        print(f"CREATE LABELS — {stem}  shape={volume.shape}")
-        print(f"σ_xy={sigma_xy}  σ_z={sigma_z}  min_overlap={min_overlap_pct}%  min_volume={min_volume} vox")
+        print(f"CREATE LABELS — {stem}  shape={volume.shape}  mode={mode}")
+        if mode == "cellpose":
+            print(f"model={model_path}  diameter={'auto' if diameter == 0 else diameter}")
+        else:
+            print(f"σ_xy={sigma_xy}  σ_z={sigma_z}")
+        print(f"min_overlap={min_overlap_pct}%  min_volume={min_volume} vox")
         print(f"{'='*70}")
 
         result = {}
 
         def _worker():
             try:
-                labels = create_labels(
-                    volume,
-                    sigma_xy=sigma_xy,
-                    sigma_z=sigma_z,
-                    min_overlap_pct=min_overlap_pct,
-                    min_volume=min_volume,
-                )
+                if mode == "cellpose":
+                    labels = create_labels_cellpose(
+                        volume,
+                        model_path=model_path,
+                        min_overlap_pct=min_overlap_pct,
+                        min_volume=min_volume,
+                        diameter=diameter,
+                    )
+                else:
+                    labels = create_labels(
+                        volume,
+                        sigma_xy=sigma_xy,
+                        sigma_z=sigma_z,
+                        min_overlap_pct=min_overlap_pct,
+                        min_volume=min_volume,
+                    )
                 result["labels"] = labels
             except Exception as exc:
                 traceback.print_exc()

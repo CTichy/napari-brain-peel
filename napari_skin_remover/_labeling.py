@@ -633,6 +633,149 @@ def split_label(
     return out.astype(np.int32), new_ids
 
 
+# ─────────────────────────────────────────────────────────────────────────────
+# Shared 3D stitching helper  (steps 5-7, used by Standard + Cellpose paths)
+# ─────────────────────────────────────────────────────────────────────────────
+
+def _stitch_and_filter_cpu(
+    slice_labels: np.ndarray,
+    min_overlap_pct: float,
+    min_volume: int,
+) -> np.ndarray:
+    """
+    Overlap graph → Union-Find → volume filter → renumber 1…N.
+
+    Parameters
+    ----------
+    slice_labels    : (Z, Y, X) int32 — per-slice 2D labels with globally
+                      unique IDs (0 = background)
+    min_overlap_pct : minimum overlap ratio (%) to link blobs across slices
+    min_volume      : minimum 3D blob size in voxels
+    """
+    Z = slice_labels.shape[0]
+    offset = int(slice_labels.max())
+    if offset == 0:
+        return slice_labels.astype(np.int32)
+
+    encode_base = offset + 1
+    min_overlap = min_overlap_pct / 100.0
+
+    with ThreadPoolExecutor(max_workers=_N_THREADS) as pool:
+        pair_lists = list(pool.map(
+            _compute_slice_pair_links,
+            [
+                (slice_labels[z], slice_labels[z + 1], min_overlap, encode_base)
+                for z in range(Z - 1)
+            ],
+        ))
+
+    uf = _UnionFind()
+    n_links = 0
+    for pairs in pair_lists:
+        for a, b in pairs:
+            uf.union(a, b)
+            n_links += 1
+
+    print(f"   Cross-slice links: {n_links}  (min overlap={min_overlap_pct:.1f}%)")
+
+    all_labels = np.unique(slice_labels[slice_labels > 0]).tolist()
+    roots = {lbl: uf.find(lbl) for lbl in all_labels}
+    unique_roots = sorted(set(roots.values()))
+    root_to_new = {root: i + 1 for i, root in enumerate(unique_roots)}
+
+    max_lbl = int(slice_labels.max())
+    lut = np.zeros(max_lbl + 1, dtype=np.int32)
+    for old_lbl in all_labels:
+        lut[old_lbl] = root_to_new[roots[old_lbl]]
+
+    output = lut[slice_labels]
+
+    max_out = int(output.max())
+    counts = np.bincount(output.ravel().astype(np.int64), minlength=max_out + 1)
+    keep_lut = counts >= min_volume
+    keep_lut[0] = True
+    output = np.where(keep_lut[output], output, 0).astype(np.int32)
+    removed = int(((counts[1:] > 0) & (counts[1:] < min_volume)).sum())
+
+    remaining = np.unique(output[output > 0]).tolist()
+    volumes_sorted = sorted(
+        [(int(counts[lbl]), int(lbl)) for lbl in remaining], reverse=True
+    )
+    max_out2 = int(output.max())
+    lut2 = np.zeros(max_out2 + 1, dtype=np.int32)
+    for new_id, (_vol, old_id) in enumerate(volumes_sorted, start=1):
+        lut2[old_id] = new_id
+
+    output = lut2[output]
+    n_final = int(output.max())
+    print(f"   3D blobs removed (< {min_volume} vox): {removed}")
+    print(f"   Final 3D labels: {n_final}  (label 1 = largest)")
+    return output.astype(np.int32)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Cellpose-SAM path
+# ─────────────────────────────────────────────────────────────────────────────
+
+def create_labels_cellpose(
+    volume: np.ndarray,
+    model_path: str,
+    min_overlap_pct: float = 10.0,
+    min_volume: int = 7500,
+    diameter: float = 0.0,
+) -> np.ndarray:
+    """
+    Create 3D labels using a fine-tuned Cellpose-SAM model.
+
+    Runs 2D inference on each Z-slice, then links slices into 3D objects
+    using the same overlap-based Union-Find as the Standard path.
+
+    Parameters
+    ----------
+    volume          : (Z, Y, X) ndarray — brain_only output
+    model_path      : path to a CellposeModel checkpoint
+    min_overlap_pct : minimum 2D overlap % to link blobs across slices
+    min_volume      : minimum 3D blob size in voxels
+    diameter        : expected cell diameter in pixels (0 = auto-estimate)
+
+    Returns
+    -------
+    (Z, Y, X) int32 ndarray — 0=background, 1..N=objects (1=largest)
+    """
+    try:
+        from cellpose import models as _cp_models
+    except ImportError:
+        raise ImportError(
+            "cellpose is not installed in this environment. "
+            "Activate the cellpose conda environment or install cellpose."
+        )
+
+    print(f"   Loading Cellpose model: {model_path}")
+    model = _cp_models.CellposeModel(gpu=True, pretrained_model=str(model_path))
+    diam = float(diameter) if diameter > 0 else None
+
+    Z, Y, X = volume.shape
+    slice_labels = np.zeros((Z, Y, X), dtype=np.int32)
+    offset = 0
+
+    for z in range(Z):
+        slc = volume[z].astype(np.float32)
+        masks, _, _ = model.eval(slc, do_3D=False, channels=[0, 0], diameter=diam)
+        n = int(masks.max())
+        if n > 0:
+            slice_labels[z] = np.where(
+                masks > 0,
+                masks.astype(np.int32) + offset,
+                np.int32(0),
+            )
+            offset += n
+        print(f"   Z {z + 1:3d}/{Z}  blobs={n}  total={offset}", end="\r")
+
+    print(f"\n   Cellpose 2D scan: {offset} 2D blobs across {Z} slices")
+    _free_gpu_cache()
+    return _stitch_and_filter_cpu(slice_labels, min_overlap_pct, min_volume)
+
+
 def create_labels(
     volume: np.ndarray,
     sigma_xy: float = 1.0,
