@@ -18,8 +18,6 @@ Given a 3D confocal volume (TIF or IMS), the plugin provides three tabs:
 
 ## Environment setup (first time)
 
-The plugin requires a conda environment with all dependencies. The `environment.yml` in this repo defines everything needed.
-
 ### 1. Clone the repository
 
 ```bash
@@ -29,55 +27,42 @@ cd napari-skin-remover
 
 ### 2. Create the environment
 
+**Linux (CUDA GPU):**
 ```bash
 conda env create -f environment.yml
+```
+
+**Mac (CPU / Apple MPS):**
+```bash
+conda env create -f environment-mac.yml
+```
+
+### 3. Activate and launch
+
+```bash
 conda activate skin-seg
+napari
 ```
 
-This installs napari, MONAI, and the plugin itself in one step.
-
-### 3. GPU acceleration (Linux + CUDA only — skip on Mac)
-
-After creating the environment, run:
-
-```bash
-pip install cupy-cuda12x cucim-cu12
-conda install -c nvidia cuda-nvrtc
-conda env config vars set CUDA_PATH=$(python -c "import sys; print(sys.prefix)")/targets/x86_64-linux
-```
-
-Then reactivate the environment:
-
-```bash
-conda deactivate && conda activate skin-seg
-```
-
-On Mac, the plugin runs on CPU automatically — no extra steps needed.
+Then: **Plugins → MONAI Skin-Remover**
 
 ---
 
 ## Updating (subsequent runs)
 
-To get the latest plugin code and any new dependencies:
-
 ```bash
-cd napari-skin-remover        # must be in the repo folder
+cd napari-skin-remover
 git pull
-conda env update --name skin-seg -f environment.yml --prune
+conda env update --name skin-seg -f environment.yml --prune   # or environment-mac.yml on Mac
 ```
 
-> **Note:** `conda env update -f environment.yml` looks for the file in the current directory.
-> Always `cd` into the repo folder first, or provide the full path with `-f /path/to/environment.yml`.
-
-**Important — Linux only:** `conda env update` uses its own internal pip which ignores the
-`--index-url` in environment.yml and may reset torch to the wrong version.
-After every `conda env update`, run this to restore the correct torch:
-
-```bash
-/home/carlos-eduardo-tichy/anaconda3/envs/skin-seg/bin/pip install \
-  "torch==2.7.0+cu126" "torchvision==0.22.0+cu126" \
-  --index-url https://download.pytorch.org/whl/cu126
-```
+> **Linux only:** after every `conda env update`, restore the correct torch:
+> ```bash
+> /home/carlos-eduardo-tichy/anaconda3/envs/skin-seg/bin/pip install \
+>   "torch==2.7.0+cu126" "torchvision==0.22.0+cu126" \
+>   --index-url https://download.pytorch.org/whl/cu126
+> ```
+> (`conda env update` ignores `--extra-index-url` in environment.yml and resets torch to the wrong version.)
 
 ---
 
@@ -88,27 +73,7 @@ The plugin requires a trained `.pth` checkpoint — **not included in this repo*
 **Download:**
 [best_model_fullstack_v1_epoch460_dice9573.pth](https://cloud.technikum-wien.at/s/kYQ4qq3Jsn4xEyY)
 
-Save it anywhere convenient and point the plugin to it using the **Browse (...)** button in Tab 1. The path is remembered across sessions.
-
----
-
-## Usage
-
-### Launch napari
-
-```bash
-conda activate skin-seg
-napari
-```
-
-Then: **Plugins → MONAI Skin-Remover**
-
-### CLI
-
-```bash
-skin-remover path/to/stack.tif
-python -m napari_skin_remover path/to/stack.ims
-```
+Save it anywhere and point the plugin to it using the **Browse (...)** button in Tab 1. The path is remembered across sessions.
 
 ---
 
