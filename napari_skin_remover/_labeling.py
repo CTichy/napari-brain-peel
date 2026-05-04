@@ -760,7 +760,7 @@ def create_labels_cellpose(
 
     for z in range(Z):
         slc = volume[z].astype(np.float32)
-        masks, _, _ = model.eval(slc, do_3D=False, channels=[0, 0], diameter=diam)
+        masks, _, _ = model.eval(slc, do_3D=False, diameter=diam)
         n = int(masks.max())
         if n > 0:
             slice_labels[z] = np.where(
