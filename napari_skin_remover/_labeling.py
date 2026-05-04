@@ -743,6 +743,7 @@ def create_labels_cellpose(
     (Z, Y, X) int32 ndarray — 0=background, 1..N=objects (1=largest)
     """
     try:
+        import torchvision  # must be fully initialised before segment_anything imports it
         from cellpose import models as _cp_models
     except ImportError:
         raise ImportError(
