@@ -19,11 +19,13 @@ dependencies:
     - imagecodecs
     - skan
 
-    # ── PyTorch (CPU+MPS on Mac, CUDA on Linux — conda handles the right build) ─
-    # On Linux with CUDA, replace with the appropriate --index-url if needed.
-    # See: https://pytorch.org/get-started/locally/
-    - torch
-    - torchvision
+    # ── PyTorch ──────────────────────────────────────────────────────────
+    # Linux (CUDA 12.4 build — works with driver ≥ 525, up to 12.8):
+    - torch==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+    - torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+    # Mac (CPU/MPS): comment out the two lines above and uncomment these:
+    # - torch
+    # - torchvision
 
     # ── MONAI (skin segmentation inference) ─────────────────────────────
     - monai>=1.0
