@@ -21,8 +21,8 @@ dependencies:
 
     # ── PyTorch ──────────────────────────────────────────────────────────
     # Linux (CUDA 12.4 build — works with driver ≥ 525, up to 12.8):
-    - torch==2.6.0+cu124 --index-url https://download.pytorch.org/whl/cu124
-    - torchvision==0.21.0+cu124 --index-url https://download.pytorch.org/whl/cu124
+    - torch==2.7.0+cu126 --index-url https://download.pytorch.org/whl/cu126
+    - torchvision==0.22.0+cu126 --index-url https://download.pytorch.org/whl/cu126
     # Mac (CPU/MPS): comment out the two lines above and uncomment these:
     # - torch
     # - torchvision
