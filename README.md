@@ -69,6 +69,16 @@ conda env update --name skin-seg -f environment.yml --prune
 > **Note:** `conda env update -f environment.yml` looks for the file in the current directory.
 > Always `cd` into the repo folder first, or provide the full path with `-f /path/to/environment.yml`.
 
+**Important — Linux only:** `conda env update` uses its own internal pip which ignores the
+`--index-url` in environment.yml and may reset torch to the wrong version.
+After every `conda env update`, run this to restore the correct torch:
+
+```bash
+/home/carlos-eduardo-tichy/anaconda3/envs/skin-seg/bin/pip install \
+  "torch==2.7.0+cu126" "torchvision==0.22.0+cu126" \
+  --index-url https://download.pytorch.org/whl/cu126
+```
+
 ---
 
 ## Model file
