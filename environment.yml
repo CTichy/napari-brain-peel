@@ -1,0 +1,73 @@
+name: skin-seg
+channels:
+  - pytorch
+  - nvidia
+  - conda-forge
+  - defaults
+
+dependencies:
+  - python=3.10
+  - pip
+
+  - pip:
+    # ── Core scientific stack ────────────────────────────────────────────
+    - numpy>=1.20
+    - scipy
+    - scikit-image
+    - scikit-learn
+    - tifffile
+    - imagecodecs
+    - skan
+
+    # ── PyTorch (CPU+MPS on Mac, CUDA on Linux — conda handles the right build) ─
+    # On Linux with CUDA, replace with the appropriate --index-url if needed.
+    # See: https://pytorch.org/get-started/locally/
+    - torch
+    - torchvision
+
+    # ── MONAI (skin segmentation inference) ─────────────────────────────
+    - monai>=1.0
+
+    # ── Napari + plugins ─────────────────────────────────────────────────
+    - "napari[all]>=0.5"
+    - napari-console
+    - napari-svg
+    - napari-label-focus
+    - napari-3d-ortho-viewer
+    - napari-segment-blobs-and-things-with-membranes
+    - napari-assistant
+    - napari-time-slicer
+    - napari-tools-menu
+    - napari-workflows
+
+    # ── IMS file reader ──────────────────────────────────────────────────
+    - imaris-ims-file-reader
+
+    # ── Cellpose-SAM (Create Labels — AI mode) ───────────────────────────
+    # Installed WITHOUT torch dependency to avoid downgrading the torch above.
+    - cellpose==4.1.1
+    - fastremap
+    - natsort
+    - fill-voids
+    - opencv-python-headless
+    - roifile
+    - segment-anything
+
+    # ── Description backends (Tab 3 — Statistics) ────────────────────────
+    - openai        # OpenAI API backend (optional)
+    - anthropic     # Claude API backend (optional)
+    - requests      # Ollama backend
+
+    # ── Plugin itself ────────────────────────────────────────────────────
+    - "napari-skin-remover @ git+https://github.com/CTichy/napari-skin-remover.git"
+
+# ── GPU acceleration (Linux + CUDA only — skip on Mac) ──────────────────────
+# After creating the environment, run on Linux:
+#
+#   pip install cupy-cuda12x
+#   pip install cucim-cu12
+#   conda install -c nvidia cuda-nvrtc
+#   conda env config vars set CUDA_PATH=$(python -c \
+#     "import sys; print(sys.prefix)")/targets/x86_64-linux
+#
+# These packages are not listed here because they have no macOS builds.
