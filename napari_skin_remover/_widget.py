@@ -370,18 +370,6 @@ class SkinRemoverWidget(QWidget):
         sz_row.addWidget(self._sz_val)
         t2.addLayout(sz_row)
 
-        ovlp_row = QHBoxLayout()
-        ovlp_row.addWidget(QLabel("Min overlap (%):"))
-        self._ovlp_slider = QSlider(Qt.Horizontal)
-        self._ovlp_slider.setMinimum(1)
-        self._ovlp_slider.setMaximum(100)
-        self._ovlp_slider.setValue(10)
-        self._ovlp_val = QLabel("10")
-        self._ovlp_val.setFixedWidth(28)
-        ovlp_row.addWidget(self._ovlp_slider)
-        ovlp_row.addWidget(self._ovlp_val)
-        t2.addLayout(ovlp_row)
-
         area_row = QHBoxLayout()
         area_row.addWidget(QLabel("Min volume (vox):"))
         self._area_slider = QSlider(Qt.Horizontal)
@@ -720,9 +708,6 @@ class SkinRemoverWidget(QWidget):
         )
         self._sz_slider.valueChanged.connect(
             lambda v: self._sz_val.setText(f"{v/10:.1f}")
-        )
-        self._ovlp_slider.valueChanged.connect(
-            lambda v: self._ovlp_val.setText(str(v))
         )
         self._area_slider.valueChanged.connect(
             lambda v: self._area_val.setText(f"{v:,}")
@@ -1416,10 +1401,9 @@ class SkinRemoverWidget(QWidget):
             )
             return
 
-        sigma_xy        = self._sxy_slider.value()  / 10.0
-        sigma_z         = self._sz_slider.value()   / 10.0
-        min_overlap_pct = float(self._ovlp_slider.value())
-        min_volume      = self._area_slider.value()
+        sigma_xy   = self._sxy_slider.value()  / 10.0
+        sigma_z    = self._sz_slider.value()   / 10.0
+        min_volume = self._area_slider.value()
         stem            = target.name
         scale           = tuple(float(v) for v in target.scale) if len(target.scale) == 3 else (1., 1., 1.)
 
@@ -1428,7 +1412,7 @@ class SkinRemoverWidget(QWidget):
 
         print(f"\n{'='*70}")
         print(f"CREATE LABELS — {stem}  shape={volume.shape}")
-        print(f"σ_xy={sigma_xy}  σ_z={sigma_z}  min_overlap={min_overlap_pct}%  min_volume={min_volume} vox")
+        print(f"σ_xy={sigma_xy}  σ_z={sigma_z}  min_volume={min_volume} vox")
         print(f"{'='*70}")
 
         result = {}
@@ -1439,7 +1423,6 @@ class SkinRemoverWidget(QWidget):
                     volume,
                     sigma_xy=sigma_xy,
                     sigma_z=sigma_z,
-                    min_overlap_pct=min_overlap_pct,
                     min_volume=min_volume,
                 )
                 result["labels"] = labels
